@@ -1,0 +1,110 @@
+:root {
+  --bg:        #1a1a1e;
+  --panel:     #242429;
+  --panel-hi:  #2d2d34;
+  --panel-lo:  #1d1d21;
+  --group-row: #23232a;
+  --workspace: #101014;
+  --border:    #37373f;
+  --border-subtle: #26262c;
+  --border-faint:  #202026;
+  --canvas-bg: #15151a;
+  --glyph-bg: #111111;
+  --glyph-border: #2a2a2a;
+  --glyph-hover: #2a3a55;
+  --transparency-check: #24242c;
+  --pure-black: #000000;
+  --pure-white: #ffffff;
+
+  --modal-backdrop: rgba(0, 0, 0, 0.5);
+  --modal-backdrop-strong: rgba(0, 0, 0, 0.56);
+  --shadow-subtle: rgba(0, 0, 0, 0.35);
+  --shadow-panel: rgba(0, 0, 0, 0.4);
+  --shadow-raised: rgba(0, 0, 0, 0.45);
+  --shadow-menu: rgba(0, 0, 0, 0.48);
+  --shadow-popover: rgba(0, 0, 0, 0.5);
+  --shadow-popover-strong: rgba(0, 0, 0, 0.52);
+  --shadow-modal: rgba(0, 0, 0, 0.6);
+  --shadow-modal-strong: rgba(0, 0, 0, 0.65);
+
+  --text:      #d8d8dc;
+  --text-dim:  #8a8a92;
+  --text-faint:#66666e;
+  --on-accent: var(--pure-white);
+
+  --accent:     #e0a458;
+  --accent-dim: #7a5a30;
+  --accent-wash: rgba(224, 164, 88, 0.14);
+  --accent-wash-faint: rgba(224, 164, 88, 0.06);
+  --accent-wash-hover: rgba(224, 164, 88, 0.24);
+  --danger:     #e06c6c;
+  --danger-bg:  #6a3030;
+  --play:       #72c985;
+  --stop:       var(--danger);
+
+  --grid-line: rgba(255, 255, 255, 0.08);
+  --selection-outline: rgba(224, 164, 88, 0.5);
+  --selection-inset-outline: rgba(0, 0, 0, 0.28);
+  --selection-outer-outline: var(--shadow-raised);
+  --playhead-outline: rgba(224, 164, 88, 0.12);
+  --razor-outline: rgba(224, 108, 108, 0.18);
+
+  --audio-track-surface: #22272e;
+  --visual-clip-border: #656973;
+  --visual-clip-surface: #44474f;
+  --visual-clip-text: #e2e2e5;
+  --effect-clip-border: #706676;
+  --effect-clip-surface: #4d4652;
+  --effect-clip-text: var(--visual-clip-text);
+  --video-clip-border: #5d6f7d;
+  --video-clip-surface: #3e4c58;
+  --video-clip-text: var(--visual-clip-text);
+  --audio-clip-border: #67717d;
+  --audio-clip-surface: #46515d;
+  --audio-clip-text: var(--visual-clip-text);
+  --audio-panel-clip-border: #6e7788;
+  --audio-panel-clip-surface: #4d5665;
+  --audio-panel-clip-text: #f1f3f6;
+  --missing-clip-border: #747982;
+  --missing-clip-surface-a: #3c4048;
+  --missing-clip-surface-b: #464b54;
+  --missing-clip-text: #c8ccd3;
+  --visual-clip-label-shadow: #202126;
+  --audio-clip-label-shadow: #252932;
+
+  --waveform: rgba(206, 211, 221, 0.62);
+  --audio-gain-line: rgba(255, 255, 255, 0.72);
+  --audio-trim-surface: rgba(255, 255, 255, 0.08);
+  --audio-trim-hover: rgba(255, 255, 255, 0.28);
+  --timeline-trim: rgba(255, 255, 255, 0.5);
+  --exposure-border: rgba(255, 255, 255, 0.12);
+  --exposure-wash: rgba(255, 255, 255, 0.035);
+  --exposure-held-wash: rgba(0, 0, 0, 0.08);
+
+  --key-surface: #25262b;
+  --frame-key-outline: #e5e5e8;
+  --property-key-outline: #b8c5d6;
+
+  --onion-previous: var(--danger);
+  --onion-next: #5b8fd6;
+  --thumbnail-empty-surface: rgba(255, 255, 255, 0.035);
+  --thumbnail-empty-line: rgba(255, 255, 255, 0.14);
+  --thumbnail-reference-surface: rgba(255, 255, 255, 0.025);
+  --thumbnail-reference-line: rgba(255, 255, 255, 0.24);
+  --thumbnail-reference-text: rgba(255, 255, 255, 0.55);
+
+  --font-ui:   system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "Cascadia Mono", ui-monospace, Consolas, monospace;
+
+  --menubar-h:  32px;
+  --optbar-h:   34px;
+  --tools-w:    42px;
+  --right-w:    260px;
+  --timeline-h: 34px;
+
+  --cell-w: 18px;
+  --cell-h: 36px;
+
+  --radius: 6px;
+  --radius-sm: 4px;
+}

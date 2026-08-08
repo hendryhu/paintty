@@ -1,0 +1,141 @@
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) var(--workspace);
+}
+
+html, body {
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  color-scheme: dark;
+  font-family: var(--font-ui);
+  font-size: 13px;
+  overflow: hidden;
+  user-select: none;
+}
+
+#app { height: 100vh; }
+
+.scroll {
+  scrollbar-gutter: stable;
+}
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-track { background: var(--workspace); }
+*::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 5px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-thumb:hover { background-color: var(--accent-dim); }
+*::-webkit-scrollbar-corner { background: var(--workspace); }
+
+button { font: inherit; cursor: pointer; }
+
+.icon-tool-button {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 17px;
+}
+
+.icon-tool-button > svg { display: block; width: 17px; height: 17px; }
+.icon-tool-button:hover:not(:disabled) { background: var(--panel-hi); color: var(--text); }
+.icon-tool-button.active { background: var(--accent-dim); color: var(--on-accent); }
+.icon-tool-button:disabled { opacity: 0.28; cursor: default; }
+.icon-tool-button:disabled:hover { background: transparent; color: var(--text-dim); }
+
+:where(input, select, textarea, option) {
+  font: inherit;
+  color-scheme: dark;
+}
+
+:where(input[type='text'], input[type='search'], textarea, select) {
+  padding: 4px 6px;
+  background: var(--canvas-bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+:where(select, option) {
+  font-size: 11px;
+}
+
+:where(option) {
+  background: var(--canvas-bg);
+  color: var(--text);
+}
+
+:where(input[type='checkbox'], input[type='radio']) {
+  accent-color: var(--accent);
+}
+
+:where(button, input, select, textarea):focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+}
+
+:where(button, input, select, textarea):disabled {
+  cursor: default;
+}
+
+.modal-backdrop {
+  position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center;
+  background: var(--modal-backdrop);
+}
+
+.modal-dialog {
+  overflow: hidden; background: var(--panel-hi); border: 1px solid var(--border);
+  border-radius: var(--radius); box-shadow: 0 8px 30px var(--shadow-modal);
+}
+
+.modal-head {
+  display: flex; align-items: center; justify-content: space-between; padding: 10px 12px;
+  border-bottom: 1px solid var(--border); color: var(--text); font-size: 13px; font-weight: bold;
+}
+
+.modal-close {
+  width: 24px; height: 24px; padding: 0; border: 0; background: transparent;
+  color: var(--text-dim); font-size: 18px; line-height: 1;
+}
+
+.modal-close:hover { color: var(--text); }
+
+.primary-button, .secondary-button {
+  padding: 7px 12px; border-radius: var(--radius-sm); font-size: 12px;
+}
+
+.primary-button {
+  border: 1px solid var(--accent-dim); background: var(--accent-dim); color: var(--on-accent);
+}
+
+.primary-button:not(:disabled):hover { background: var(--accent); }
+
+.secondary-button {
+  border: 1px solid var(--border); background: var(--panel); color: var(--text);
+}
+
+.secondary-button:not(:disabled):hover { border-color: var(--accent); }
+
+.primary-button:disabled, .secondary-button:disabled { opacity: 0.4; }
+
+.danger-button {
+  padding: 6px 10px; border: 1px solid var(--danger); border-radius: var(--radius-sm);
+  background: transparent; color: var(--danger); font-size: 11px;
+}
+
+.danger-button:not(:disabled):hover { background: var(--danger-bg); color: var(--text); }
+.danger-button:disabled { opacity: 0.4; }
