@@ -1,7 +1,7 @@
 {
   "name": "paintty",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Browser-based editor for terminal art and animations",
   "license": "MIT",
   "homepage": "https://paintty.hendryhu.com/",
@@ -17,35 +17,46 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "npm run test:policy && npm run test:icons && npm run test:icon-bundle && npm run test:notifications && npm run test:layers && npm run test:new-project && npm run test:exports && npm run test:logic && npm run test:shape-editing && npm run test:timeline-new && npm run test:startup-static",
-    "test:policy": "node test/inputPolicy.test.mjs && node test/themeColorPolicy.test.mjs && node test/svelte5.test.mjs",
-    "test:icons": "vitest run test/icons.mounted.test.js --environment happy-dom",
-    "test:icon-bundle": "node test/iconBundle.test.mjs",
-    "test:notifications": "vitest run test/notifications.test.js",
-    "test:layers": "node test/layerDeletion.test.mjs && vitest run test/layerDeletion.mounted.test.js test/canvas.mounted.test.js --environment happy-dom",
-    "test:new-project": "node test/newProject.test.mjs",
-    "test:exports": "node test/exportDestination.test.mjs && node test/exportCancellation.test.mjs",
-    "test:startup-static": "node test/startupAssets.test.mjs && node test/startupLoaders.test.mjs && node test/metadata.test.mjs",
-    "test:logic": "node test/mediaPurge.test.mjs && node test/mediaRegistry.test.mjs && node test/mediaResources.test.mjs && node test/mediaGc.test.mjs && node test/audio.test.mjs && node test/animationExport.test.mjs && node test/projectArchive.test.mjs && node test/identity.test.mjs && node test/cellmap.test.mjs && node test/layerchannels.test.mjs && node test/effects.test.mjs && node test/fill.test.mjs && node test/tools.test.mjs && node test/shapes.test.mjs && node test/shapePath.test.mjs && node test/shapeTransform.test.mjs && node test/shapeBodyDrag.test.mjs && node test/rasterBodyDrag.test.mjs && node test/gestureOwnership.test.mjs && node test/canvasCoordinates.test.mjs && node test/converter.test.mjs && node test/video.test.mjs && node test/mp4.test.mjs && node test/gapmove.test.mjs && node test/selection.test.mjs && node test/layerContextMove.test.mjs && node test/crop.test.mjs && node test/numberField.test.mjs && node test/colorPickerState.test.mjs && node test/colorEditSession.test.mjs && node test/nativeDialogs.test.mjs && node test/render.test.mjs && node test/frames.test.mjs && node test/playbackEditing.test.mjs && node test/clipTimeline.test.mjs && node test/clipTimelineResolver.test.mjs && node test/clipTimelineState.test.mjs && node test/timelineViewport.test.mjs && node test/clipTimelineUi.test.mjs && node test/timelineKeys.test.mjs && node test/temporalCurve.test.mjs && node test/playback-scheduling.test.mjs && node test/outputGrid.test.mjs && node test/fileio.test.mjs && node test/terminalCopy.test.mjs && node test/layerThumbnail.test.mjs && node test/glyphInput.test.mjs && node test/glyphWidth.test.mjs && node test/sketchMatch.test.mjs && node test/textLayer.test.mjs && node test/textEditing.test.mjs && node test/textHistory.test.mjs && node test/toolAvailability.test.mjs && node test/textHitTest.test.mjs && node test/recovery.test.mjs && node test/recentProjects.test.mjs && node test/livePreview.test.mjs && node test/cliDownload.test.mjs && node test/fuzz.mjs && node test/properties.mjs",
-    "test:shape-editing": "node test/shapeEditingLifecycle.test.mjs && vitest run test/shapeProperties.mounted.test.js test/numberField.mounted.test.js --environment happy-dom",
-    "test:media": "node test/mediaRegistry.test.mjs && node test/mediaResources.test.mjs && node test/mediaGc.test.mjs && node test/projectArchive.test.mjs && node test/fileio.test.mjs && node test/audio.test.mjs && node test/video.test.mjs",
-    "test:clip-timeline-ui": "node test/clipTimelineUi.test.mjs && node test/timelineTags.test.mjs && node test/timelineUiState.test.mjs && node test/timelineThumbnails.test.mjs",
-    "test:timeline-new": "node test/timelineTags.test.mjs && node test/timelineUiState.test.mjs && node test/timelineThumbnails.test.mjs && npm run test:timeline-mounted",
-    "test:timeline-mounted": "vitest run test/clipTimeline.mounted.test.js --environment happy-dom",
-    "test:journeys": "node test/longJourneys.test.mjs",
-    "test:release": "npm test && npm run test:journeys && npm run build"
+    "test": "npm run check:types && npm run test:policy && npm run test:seams && npm run test:icons && npm run test:icon-bundle && npm run test:notifications && npm run test:layers && npm run test:new-project && npm run test:exports && npm run test:logic && npm run test:shape-editing && npm run test:timeline-new && npm run test:startup-static",
+    "test:seams": "tsx test/seams.browser.test.ts",
+    "test:policy": "tsx test/inputPolicy.test.ts && tsx test/themeColorPolicy.test.ts && tsx test/componentStylePolicy.test.ts && tsx test/svelte5.test.ts && tsx test/uiCopyPolicy.test.ts && tsx test/commentStyle.test.ts",
+    "test:icons": "vitest run test/icons.mounted.test.ts --environment happy-dom",
+    "test:icon-bundle": "tsx test/iconBundle.test.ts",
+    "test:notifications": "vitest run test/notifications.test.ts",
+    "test:layers": "tsx test/layerDeletion.test.ts && vitest run test/layerDeletion.mounted.test.ts test/canvas.mounted.test.ts --environment happy-dom",
+    "test:new-project": "tsx test/newProject.test.ts",
+    "test:exports": "tsx test/exportDestination.test.ts && tsx test/exportCancellation.test.ts",
+    "test:startup-static": "tsx test/startupAssets.test.ts && tsx test/startupLoaders.test.ts && tsx test/metadata.test.ts",
+    "test:logic": "tsx test/mediaPurge.test.ts && tsx test/mediaRegistry.test.ts && tsx test/mediaResources.test.ts && tsx test/mediaGc.test.ts && tsx test/audio.test.ts && tsx test/animationExport.test.ts && tsx test/projectArchive.test.ts && tsx test/identity.test.ts && tsx test/cellmap.test.ts && tsx test/layerchannels.test.ts && tsx test/effects.test.ts && tsx test/fill.test.ts && tsx test/tools.test.ts && tsx test/shapes.test.ts && tsx test/shapePath.test.ts && tsx test/shapeTransform.test.ts && tsx test/shapeBodyDrag.test.ts && tsx test/rasterBodyDrag.test.ts && tsx test/gestureOwnership.test.ts && tsx test/canvasCoordinates.test.ts && tsx test/converter.test.ts && tsx test/video.test.ts && tsx test/mp4.test.ts && tsx test/gapmove.test.ts && tsx test/selection.test.ts && tsx test/layerContextMove.test.ts && tsx test/crop.test.ts && tsx test/numberField.test.ts && tsx test/colorPickerState.test.ts && tsx test/colorEditSession.test.ts && tsx test/nativeDialogs.test.ts && tsx test/render.test.ts && tsx test/frames.test.ts && tsx test/playbackEditing.test.ts && tsx test/clipTimeline.test.ts && tsx test/clipTimelineResolver.test.ts && tsx test/clipTimelineState.test.ts && tsx test/timelineViewport.test.ts && tsx test/clipTimelineUi.test.ts && tsx test/timelineKeys.test.ts && tsx test/temporalCurve.test.ts && tsx test/playback-scheduling.test.ts && tsx test/outputGrid.test.ts && tsx test/fileio.test.ts && tsx test/terminalCopy.test.ts && tsx test/layerThumbnail.test.ts && tsx test/glyphInput.test.ts && tsx test/glyphWidth.test.ts && tsx test/sketchMatch.test.ts && tsx test/textLayer.test.ts && tsx test/textEditing.test.ts && tsx test/textHistory.test.ts && tsx test/toolAvailability.test.ts && tsx test/textHitTest.test.ts && tsx test/recovery.test.ts && tsx test/recentProjects.test.ts && tsx test/livePreview.test.ts && tsx test/cliDownload.test.ts && tsx test/fuzz.ts && tsx test/properties.ts",
+    "test:shape-editing": "tsx test/shapeEditingLifecycle.test.ts && vitest run test/shapeProperties.mounted.test.ts test/numberField.mounted.test.ts --environment happy-dom",
+    "test:media": "tsx test/mediaRegistry.test.ts && tsx test/mediaResources.test.ts && tsx test/mediaGc.test.ts && tsx test/projectArchive.test.ts && tsx test/fileio.test.ts && tsx test/audio.test.ts && tsx test/video.test.ts",
+    "test:clip-timeline-ui": "tsx test/clipTimelineUi.test.ts && tsx test/timelineTags.test.ts && tsx test/timelineUiState.test.ts && tsx test/timelineThumbnails.test.ts",
+    "test:timeline-new": "tsx test/timelineTags.test.ts && tsx test/timelineUiState.test.ts && tsx test/timelineThumbnails.test.ts && npm run test:timeline-mounted",
+    "test:timeline-mounted": "vitest run test/clipTimeline.mounted.test.ts --environment happy-dom",
+    "test:journeys": "tsx test/longJourneys.test.ts",
+    "test:release": "npm test && npm run test:journeys && npm run build",
+    "check:types": "svelte-check --tsconfig ./tsconfig.json"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^7.2.0",
     "@testing-library/svelte": "^5.4.2",
+    "@types/node": "^24.13.3",
     "happy-dom": "^20.11.2",
+    "playwright-chromium": "^1.62.1",
     "svelte": "^5.56.8",
+    "svelte-check": "^4.7.5",
+    "tsx": "^4.23.11",
+    "typescript": "^6.0.3",
     "vite": "^8.2.1",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.11"
   },
   "dependencies": {
     "@iconify/svelte": "^5.2.2",
     "fflate": "^0.8.3",
     "string-width": "^8.2.2"
+  },
+  "allowScripts": {
+    "playwright-chromium@1.62.1": true,
+    "esbuild@0.28.2": true
   }
 }

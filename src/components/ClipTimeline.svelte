@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   import Icon from './Icon.svelte';
   import { flushSync, onDestroy, onMount, tick as domTick, untrack } from 'svelte';
   import {
@@ -121,19 +121,354 @@
   import { canvasFont } from '../lib/font.js';
   import { resolveClipTimelineLayers } from '../lib/clipTimelineResolver.js';
   import { readThemeColor } from '../lib/themeColors.js';
+  import type { EditorLayer, EditorLayerPart } from '../lib/types/editor-domain.js';
+  import type {
+    AudioRuntimeAsset,
+    MediaRuntimeStatus,
+  } from '../lib/types/media-types.js';
+  import type {
+    AudioTimelineClip,
+    ClipTimelineSelection,
+    ClipTimelineState,
+    TimelineClip,
+    TimelineEdge,
+    TimelineFrameSelectionKey,
+    TimelineKeyMotionPlan,
+    TimelinePropertySelectionKey,
+    TimelineTag,
+    TimelineTagType,
+    TimelineTickRange,
+    TimelineTrack,
+  } from '../lib/types/timeline-models.js';
+  import type {
+    TickPixelTransform,
+    TimelineFilmstripSample,
+    TimelineTagMarker,
+    TimelineThumbnailModel,
+  } from '../lib/types/timeline-ui.js';
 
-  /**
-   * @typedef {Object} Props
-   * @property {boolean} [expanded]
-   * @property {number} [pixelsPerTick]
-   * @property {boolean} [showFilmstrip]
-   * @property {string} [tool]
-   * @property {number} [trackHeaderWidth]
-   * @property {(detail: { enabled: boolean }) => void} [onFilmstripToggle]
-   * @property {(event: PointerEvent) => void} [onpointerdown]
-   */
+  type TimelineTool = 'select' | 'razor' | 'tag';
+  type TimelineKeyKind = 'frame' | 'property';
+  type RevisionGuard = ReturnType<typeof captureClipTimelineRevisionGuard>;
+  type WheelZoomAnchor = ReturnType<typeof planAnchoredTimelineZoom>['anchor'];
+  type ClipMovePlan = NonNullable<ReturnType<typeof planClipMove>>;
+  type ClipDuplicatePlan = NonNullable<ReturnType<typeof planClipDuplicateMove>>;
+  type ClipTrimPlan = NonNullable<ReturnType<typeof planClipTrim>>;
+  type RazorPathPlan = ReturnType<typeof planRazorDrag>;
+  type TagGesturePlan = ReturnType<typeof planTimelineTagGesture>;
+  type TagMovePlan = ReturnType<typeof planTimelineTagMove>;
+  type FrameKeyMarker = ReturnType<typeof projectFrameKeyMarkers>[number];
+  type PropertyKeyMarker = ReturnType<typeof planClipPropertyKeyMarkers>[number];
 
-  /** @type {Props} */
+  interface Props {
+    expanded?: boolean;
+    pixelsPerTick?: number;
+    showFilmstrip?: boolean;
+    tool?: TimelineTool;
+    trackHeaderWidth?: number;
+    onFilmstripToggle?: (detail: { enabled: boolean }) => void;
+    onpointerdown?: (event: PointerEvent) => void;
+  }
+
+  interface TimelineRow {
+    id: string;
+    track: TimelineTrack;
+    kind: 'audio' | 'group' | 'visual';
+    depth: number;
+    hasChildren: boolean;
+    height?: number;
+  }
+
+  interface VisibleTimelineRow extends TimelineRow {
+    rowIndex: number;
+    top: number;
+  }
+
+  interface RulerTick {
+    tick: number;
+    major: boolean;
+  }
+
+  interface ClipBounds {
+    left: number;
+    width: number;
+  }
+
+  interface GroupKeyMarker {
+    tick: number;
+    properties: string[];
+  }
+
+  interface ThumbnailParams {
+    model: TimelineThumbnailModel;
+    backgroundChannel: boolean;
+    fontFamily: string;
+  }
+
+  interface TimelineDeletePlan {
+    kind: string;
+    selection: ClipTimelineSelection;
+  }
+
+  interface TimelinePoint {
+    tick: number;
+    row: number;
+  }
+
+  interface TimelineTagTarget {
+    tick: number | null;
+    rowId: string | null;
+    surface?: 'global';
+    valid: boolean;
+  }
+
+  interface TimelineHoverPreview {
+    tool: 'razor' | 'tag';
+    rowId: string | null;
+    surface?: 'global';
+    tick: number;
+    valid: boolean;
+    title: string;
+  }
+
+  type TimelineClipView = TimelineClip & {
+    duplicateGhost?: boolean;
+    duplicateValid?: boolean;
+  };
+
+  interface TimelineAudioClipView extends AudioTimelineClip {
+    assetId: string;
+    name?: string;
+    sourceName?: string;
+    duplicateGhost?: boolean;
+    duplicateValid?: boolean;
+  }
+
+  interface TimelineSelectionInput {
+    clipIds?: Iterable<string>;
+    frameKeys?: TimelineFrameSelectionKey[];
+    propertyKeys?: TimelinePropertySelectionKey[];
+    trackHeaderIds?: Iterable<string>;
+  }
+
+  interface CollapsedViewport {
+    left: number;
+    top: number;
+    atRight: boolean;
+    atBottom: boolean;
+  }
+
+  interface HeaderResize {
+    pointerId: number;
+    target: HTMLElement;
+    startClientX: number;
+    startWidth: number;
+    guard: RevisionGuard;
+  }
+
+  interface TagEditor {
+    tick: number;
+    x: number;
+    y: number;
+    editingId: string | null;
+  }
+
+  interface MenuPosition {
+    x: number;
+    y: number;
+  }
+
+  interface DeletableMenu extends MenuPosition {
+    deleteSelection: ClipTimelineSelection;
+    deleteCount: number;
+    deleteLabel: string;
+    deleteDisabled: boolean;
+    locked: boolean;
+  }
+
+  interface VisualMenu extends DeletableMenu {
+    kind: 'visual';
+    clipId: string;
+    trackId: string;
+  }
+
+  interface AudioMenu extends DeletableMenu {
+    kind: 'audio';
+    clipId: string;
+  }
+
+  interface KeyMenu extends DeletableMenu {
+    kind: 'key';
+    title: string;
+  }
+
+  interface GapMenu extends MenuPosition {
+    kind: 'gap';
+  }
+
+  type TimelineContextMenu = VisualMenu | AudioMenu | KeyMenu | GapMenu;
+
+  interface WaveformParams {
+    buffer: AudioBuffer | null | undefined;
+    inPoint?: number;
+    outPoint?: number;
+  }
+
+  interface TimelineKeyMarkerInput {
+    kind?: TimelineKeyKind;
+    clipId: string;
+    sourceTick: number;
+    timelineTick: number;
+    propertyName?: string;
+    [field: string]: unknown;
+  }
+
+  interface TimelineKeyMarkerLayoutBase {
+    clipId: string;
+    sourceTick: number;
+    timelineTick: number;
+    left: number;
+    top: number;
+    width: number;
+    height: number;
+    glyphSize: number;
+  }
+
+  interface TimelineFrameKeyMarkerLayout extends TimelineKeyMarkerLayoutBase {
+    kind: 'frame';
+    propertyName?: undefined;
+  }
+
+  interface TimelinePropertyKeyMarkerLayout extends TimelineKeyMarkerLayoutBase {
+    kind: 'property';
+    propertyName: string;
+  }
+
+  type TimelineKeyMarkerLayout = TimelineFrameKeyMarkerLayout | TimelinePropertyKeyMarkerLayout;
+  type PreviewTimelineKeyMarker = TimelineKeyMarkerLayout & {
+    moving?: boolean;
+    moveValid?: boolean;
+  };
+  type MarqueePlan = ReturnType<typeof planTimelineMarquee> & {
+    geometry: {
+      startPixel: number;
+      endPixel: number;
+      startRow: number;
+      endRow: number;
+    };
+  };
+
+  interface PointerEditBase {
+    pointerId: number;
+    target: HTMLElement;
+    startClientX: number;
+    startClientY: number;
+    moved: boolean;
+    guard: RevisionGuard;
+  }
+
+  interface ScrubPointerEdit extends PointerEditBase {
+    type: 'scrub';
+    plan: null;
+  }
+
+  interface TagPlacePointerEdit extends PointerEditBase {
+    type: 'tag-place';
+    startTarget: TimelineTagTarget;
+    tagSurface: 'global' | 'track';
+    plan: TagGesturePlan | null;
+  }
+
+  interface MoveTagPointerEdit extends PointerEditBase {
+    type: 'move-tag';
+    tag: TimelineTag;
+    plan: TagMovePlan | null;
+  }
+
+  interface BlankWorkspacePointerEdit extends PointerEditBase {
+    type: 'blank-workspace';
+    plan: null;
+  }
+
+  interface MarqueePointerEdit extends PointerEditBase {
+    type: 'marquee';
+    state: ClipTimelineState;
+    selection: ClipTimelineSelection;
+    row: TimelineRow;
+    startPoint: TimelinePoint;
+    startPixel: number;
+    clickTick: number;
+    modifiers: {
+      ctrlKey: boolean;
+      metaKey: boolean;
+      shiftKey: boolean;
+    };
+    plan: MarqueePlan | null;
+  }
+
+  interface RazorPathPointerEdit extends PointerEditBase {
+    type: 'razor-path';
+    state: ClipTimelineState;
+    points: TimelinePoint[];
+    rowTracks: Array<{ trackId: string }>;
+    clickTick: number;
+    clickTrackId: string;
+    plan: RazorPathPlan | null;
+  }
+
+  interface ClipPointerEditBase extends PointerEditBase {
+    state: ClipTimelineState;
+    clip: TimelineClip;
+    selectedIds: string[];
+    snapClips: TimelineClip[];
+    playheadTick: number;
+  }
+
+  interface MoveClipPointerEdit extends ClipPointerEditBase {
+    type: 'move-clip';
+    plan: ClipMovePlan | null;
+  }
+
+  interface DuplicateClipPointerEdit extends ClipPointerEditBase {
+    type: 'duplicate-clip';
+    clickSelection: ClipTimelineSelection | null;
+    clickAnchor: string | null;
+    plan: ClipDuplicatePlan | null;
+  }
+
+  interface TrimClipPointerEdit extends ClipPointerEditBase {
+    type: 'trim-clip';
+    edge: TimelineEdge;
+    edgeTick: number;
+    plan: ClipTrimPlan | null;
+  }
+
+  interface MoveKeyPointerEdit extends PointerEditBase {
+    type: 'move-key';
+    state: ClipTimelineState;
+    selection: ClipTimelineSelection;
+    plan: TimelineKeyMotionPlan | null;
+  }
+
+  type PointerEdit =
+    | ScrubPointerEdit
+    | TagPlacePointerEdit
+    | MoveTagPointerEdit
+    | BlankWorkspacePointerEdit
+    | MarqueePointerEdit
+    | RazorPathPointerEdit
+    | MoveClipPointerEdit
+    | DuplicateClipPointerEdit
+    | TrimClipPointerEdit
+    | MoveKeyPointerEdit;
+
+  type PointerEditDraft<T extends PointerEdit = PointerEdit> = T extends PointerEdit
+    ? Omit<T, keyof PointerEditBase | 'plan'>
+    : never;
+  type PointerCaptureEvent = PointerEvent & { currentTarget: HTMLElement };
+  type PointerEndEvent = Event & Partial<Pick<PointerEvent, 'pointerId' | 'clientX' | 'clientY'>>;
+  type PositionedEvent = Event & Partial<Pick<MouseEvent, 'clientX' | 'clientY'>>;
+
   let {
     expanded = true,
     pixelsPerTick = $bindable(14),
@@ -142,7 +477,7 @@
     trackHeaderWidth = $bindable(176),
     onFilmstripToggle = () => {},
     onpointerdown,
-  } = $props();
+  }: Props = $props();
 
   const RULER_H = 30;
   const COMPACT_ROW_H = 42;
@@ -150,33 +485,33 @@
   const MIN_ZOOM = 4;
   const MAX_ZOOM = 48;
 
-  let rootEl = $state();
-  let viewportEl = $state();
+  let rootEl = $state<HTMLElement | null>(null);
+  let viewportEl = $state<HTMLElement | null>(null);
   let viewportWidth = $state(1);
   let viewportHeight = $state(1);
   let scrollLeft = $state(0);
   let scrollTop = $state(0);
-  let collapsedGroups = $state(new Set());
-  let trackAnchor = null;
-  let clipAnchor = null;
-  let frameKeyAnchor = null;
-  let propertyKeyAnchor = null;
-  let pointerEdit = $state(null);
-  let headerResize = $state(null);
-  let contextMenu = $state(null);
-  let tagEditor = $state(null);
-  let tagType = $state('custom');
+  let collapsedGroups = $state<Set<string>>(new Set());
+  let trackAnchor: string | null = null;
+  let clipAnchor: string | null = null;
+  let frameKeyAnchor: TimelineFrameSelectionKey | null = null;
+  let propertyKeyAnchor: TimelinePropertySelectionKey | null = null;
+  let pointerEdit = $state<PointerEdit | null>(null);
+  let headerResize = $state<HeaderResize | null>(null);
+  let contextMenu = $state<TimelineContextMenu | null>(null);
+  let tagEditor = $state<TagEditor | null>(null);
+  let tagType = $state<TimelineTagType>('custom');
   let tagValue = $state('');
   let tagTick = $state(0);
-  let tagInputEl = $state();
-  let tagTypeEl = $state();
-  let hoverPreview = $state(null);
-  let observedMutationRevision = null;
+  let tagInputEl = $state<HTMLInputElement | null>(null);
+  let tagTypeEl = $state<HTMLSelectElement | null>(null);
+  let hoverPreview = $state<TimelineHoverPreview | null>(null);
+  let observedMutationRevision: unknown = null;
   let lastExpanded = untrack(() => expanded);
   let lastTool = tool;
-  let collapsedViewport = null;
+  let collapsedViewport: CollapsedViewport | null = null;
   let viewportGeneration = 0;
-  let wheelZoomAnchor = null;
+  let wheelZoomAnchor: WheelZoomAnchor | null = null;
 
   onMount(() => onProjectReplaced(() => {
     collapsedGroups = new Set();
@@ -185,7 +520,10 @@
   }));
   onDestroy(() => releaseAudioMediaRequests('clip-timeline'));
 
-  function buildTimelineRows(tracks, collapsed) {
+  function buildTimelineRows(
+    tracks: TimelineTrack[] | null | undefined,
+    collapsed: ReadonlySet<string>,
+  ): TimelineRow[] {
     const ordered = [...(tracks || [])];
     const byId = new Map(ordered.map((track) => [String(track.id), track]));
     const parentIds = new Set(ordered.map((track) => String(track.parentTrackId || '')));
@@ -198,9 +536,10 @@
         seen.add(parentId);
         depth++;
         if (collapsed.has(parentId)) hidden = true;
-        parentId = byId.get(parentId)?.parentTrackId == null
+        const parent = byId.get(parentId);
+        parentId = parent?.parentTrackId == null
           ? null
-          : String(byId.get(parentId).parentTrackId);
+          : String(parent.parentTrackId);
       }
       return hidden ? [] : [{
         id: String(track.id),
@@ -214,21 +553,21 @@
     });
   }
 
-  function buildRulerTicks(range, scale) {
+  function buildRulerTicks(range: TimelineTickRange, scale: number): RulerTick[] {
     const targetTicks = 62 / scale;
     const power = 10 ** Math.floor(Math.log10(Math.max(1, targetTicks)));
     const major = [1, 2, 5, 10].map((value) => value * power)
       .find((value) => value >= targetTicks) || power * 10;
     const step = scale >= 8 ? 1 : major;
     const start = Math.ceil(range.startTick / step) * step;
-    const ticks = [];
+    const ticks: RulerTick[] = [];
     for (let value = start; value <= range.endTick; value += step) {
       ticks.push({ tick: value, major: value % major === 0 });
     }
     return ticks;
   }
 
-  function measureViewport(node) {
+  function measureViewport(node: HTMLElement) {
     viewportGeneration++;
     wheelZoomAnchor = null;
     const update = () => {
@@ -243,7 +582,7 @@
     return { destroy: () => observer?.disconnect() };
   }
 
-  function onScroll(event) {
+  function onScroll(event: Event & { currentTarget: HTMLElement }): void {
     const nextScrollLeft = event.currentTarget.scrollLeft;
     if (wheelZoomAnchor &&
       Math.abs(nextScrollLeft - wheelZoomAnchor.expectedScrollLeft) >= 1e-9) {
@@ -253,7 +592,11 @@
     scrollTop = event.currentTarget.scrollTop;
   }
 
-  export async function setZoom(value, anchorClientX = null, options = {}) {
+  export async function setZoom(
+    value: number,
+    anchorClientX: number | null = null,
+    options: { source?: 'wheel' } = {},
+  ): Promise<void> {
     const next = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, Number(value) || zoom));
     if (next === zoom) return;
     const rect = viewportEl?.getBoundingClientRect();
@@ -291,7 +634,7 @@
     }
   }
 
-  function handleWheel(event) {
+  function handleWheel(event: WheelEvent): void {
     const planned = timelineWheelZoom(event, zoom, {
       contextOwned: true,
       minimum: MIN_ZOOM,
@@ -301,15 +644,15 @@
     if (!planned.handled) return;
     event.preventDefault();
     focusTimeline();
-    setZoom(planned.zoom, event.clientX, { source: 'wheel' });
+    setZoom(Number(planned.zoom), event.clientX, { source: 'wheel' });
   }
 
-  export function focusTimeline() {
+  export function focusTimeline(): void {
     setKeyboardContext('timeline');
     rootEl?.focus({ preventScroll: true });
   }
 
-  export function deselectTimeline() {
+  export function deselectTimeline(): void {
     trackAnchor = null;
     clipAnchor = null;
     frameKeyAnchor = null;
@@ -317,7 +660,7 @@
     if (hasCanonicalSelection()) clearClipSelection();
   }
 
-  function captureCollapsedViewport() {
+  function captureCollapsedViewport(): CollapsedViewport {
     return viewportEl
       ? {
           left: viewportEl.scrollLeft,
@@ -329,11 +672,11 @@
       : { left: scrollLeft, top: scrollTop, atRight: false, atBottom: false };
   }
 
-  export function prepareCollapse() {
+  export function prepareCollapse(): void {
     collapsedViewport = captureCollapsedViewport();
   }
 
-  function setTool(next) {
+  function setTool(next: TimelineTool): void {
     if (pointerEdit) finishPointer(null, true);
     tool = next;
     hoverPreview = null;
@@ -342,11 +685,11 @@
     focusTimeline();
   }
 
-  function releaseKeyboardContext() {
+  function releaseKeyboardContext(): void {
     releaseEditorKeyboardContext('timeline', rootEl);
   }
 
-  function clearTimelineContext(clearSelection = false) {
+  function clearTimelineContext(clearSelection = false): void {
     if (pointerEdit) finishPointer(null, true);
     if (headerResize) finishHeaderResize(null, true);
     contextMenu = null;
@@ -360,7 +703,7 @@
     if (clearSelection && hasCanonicalSelection()) clearClipSelection();
   }
 
-  function handleMutationRevision(revision) {
+  function handleMutationRevision(revision: unknown): void {
     const transition = planTimelineMutationTransition(observedMutationRevision, revision, {
       pointerEdit,
       headerResize,
@@ -374,7 +717,7 @@
     releaseKeyboardContext();
   }
 
-  function handleExpandedChange(nextExpanded) {
+  function handleExpandedChange(nextExpanded: boolean): void {
     const next = Boolean(nextExpanded);
     if (lastExpanded && !next) {
       if (!collapsedViewport) collapsedViewport = captureCollapsedViewport();
@@ -398,7 +741,7 @@
     lastExpanded = next;
   }
 
-  function handleToolChange(nextTool) {
+  function handleToolChange(nextTool: TimelineTool): void {
     if (nextTool === lastTool) return;
     lastTool = nextTool;
     if (pointerEdit) finishPointer(null, true);
@@ -407,17 +750,17 @@
     closeTagEditor();
   }
 
-  function toggleFilmstrip() {
+  function toggleFilmstrip(): void {
     showFilmstrip = !showFilmstrip;
     onFilmstripToggle({ enabled: showFilmstrip });
   }
 
-  function toggleGroupClick(event, trackId) {
+  function toggleGroupClick(event: MouseEvent, trackId: string): void {
     event.stopPropagation();
     toggleGroup(trackId);
   }
 
-  function toggleGroup(trackId) {
+  function toggleGroup(trackId: string): void {
     const next = new Set(collapsedGroups);
     const id = String(trackId);
     const collapsing = !next.has(id);
@@ -455,39 +798,43 @@
     if (hiddenSelection) clearClipSelection();
   }
 
-  function eventTimelinePixel(event) {
+  function eventTimelinePixel(event: MouseEvent): number {
     const rect = viewportEl?.getBoundingClientRect();
     if (!rect) return 0;
     return event.clientX - rect.left - headerWidth + scrollLeft;
   }
 
-  function eventTimelineTick(event) {
+  function eventTimelineTick(event: MouseEvent): number {
     return Math.max(0, pixelToTick(eventTimelinePixel(event), tickTransform));
   }
 
-  function roundedEventTick(event) {
+  function roundedEventTick(event: MouseEvent): number {
     return Math.max(0, Math.min(extentTicks - 1, Math.round(eventTimelineTick(event))));
   }
 
-  function activeEventTick(event) {
+  function activeEventTick(event: MouseEvent): number | null {
     return rulerTickFromPixel(eventTimelinePixel(event), zoom, contentDurationTicks);
   }
 
-  function clampedEventTick(event) {
+  function clampedEventTick(event: MouseEvent): number | null {
     return clampedRulerTickFromPixel(eventTimelinePixel(event), zoom, contentDurationTicks);
   }
 
-  function eventTimelineTagRow(event) {
+  function eventTimelineTagRow(event: MouseEvent): TimelineRow | null {
     const rect = viewportEl?.getBoundingClientRect();
     if (!rect) return null;
     if (event.clientY < rect.top + RULER_H || event.clientY >= rect.bottom) return null;
     const rowIndex = Math.floor(
       (event.clientY - rect.top - RULER_H + scrollTop) / rowHeight,
     );
-    return rowIndex >= 0 && rowIndex < rows.length ? rows[rowIndex] : null;
+    return rowIndex >= 0 && rowIndex < rows.length ? rows[rowIndex] ?? null : null;
   }
 
-  function tagPointerTarget(event, row, globalSurface = false) {
+  function tagPointerTarget(
+    event: MouseEvent,
+    row: TimelineRow | null | undefined,
+    globalSurface = false,
+  ): TimelineTagTarget {
     const rect = viewportEl?.getBoundingClientRect();
     const targetRow = globalSurface
       ? null
@@ -501,11 +848,11 @@
       rowId: targetRow?.id ?? null,
       ...(globalSurface ? { surface: 'global' } : {}),
       valid: insideLane && tick != null &&
-        (globalSurface || (Boolean(targetRow) && targetRow.kind !== 'group')),
+        (globalSurface || (targetRow != null && targetRow.kind !== 'group')),
     };
   }
 
-  function tagHoverPreview(target) {
+  function tagHoverPreview(target: TimelineTagTarget | null | undefined): TimelineHoverPreview | null {
     if (target?.tick == null || (target.surface !== 'global' && target.rowId == null)) return null;
     return {
       tool: 'tag',
@@ -517,36 +864,40 @@
     };
   }
 
-  function eventTimelineRow(event) {
+  function eventTimelineRow(event: MouseEvent): number {
     const rect = viewportEl?.getBoundingClientRect();
     if (!rect || !rows.length) return 0;
     const row = (event.clientY - rect.top - RULER_H + scrollTop) / rowHeight;
     return Math.max(0, Math.min(rows.length - Number.EPSILON, row));
   }
 
-  function eventTimelinePoint(event) {
+  function eventTimelinePoint(event: MouseEvent): TimelinePoint {
     return {
       tick: Math.max(0, eventTimelineTick(event)),
       row: eventTimelineRow(event),
     };
   }
 
-  function hasCanonicalSelection(selection = $clipTimelineSelection) {
-    return selection.clipIds.size || selection.frameKeys.length || selection.propertyKeys.length ||
-      selection.trackHeaderIds.size || selection.gap || selection.rulerRange;
+  function hasCanonicalSelection(selection: ClipTimelineSelection = $clipTimelineSelection): boolean {
+    return Boolean(selection.clipIds.size || selection.frameKeys.length || selection.propertyKeys.length ||
+      selection.trackHeaderIds.size || selection.gap || selection.rulerRange);
   }
 
-  function applyTimelineSelection(selection, syncLayer = true) {
+  function applyTimelineSelection(
+    selection: ClipTimelineSelection | TimelineSelectionInput,
+    syncLayer = true,
+  ): ReturnType<typeof setClipSelection> {
     const result = setClipSelection(selection);
     if (!syncLayer) return result;
     const target = timelineSelectionLayerTarget(canonicalState, selection);
-    if (target && !selectLayerPart(target.layerId, target.part)) {
+    const part: EditorLayerPart = target?.part === 'mask' ? 'mask' : target?.part === 'content-mask' ? 'content-mask' : 'layer';
+    if (target && !selectLayerPart(target.layerId, part)) {
       selectLayerPart(target.layerId, 'layer');
     }
     return result;
   }
 
-  function selectTrack(event, trackId) {
+  function selectTrack(event: MouseEvent, trackId: string): void {
     const planned = planTrackHeaderClick(
       canonicalState,
       $clipTimelineSelection,
@@ -558,7 +909,11 @@
     applyTimelineSelection(planned.selection);
   }
 
-  function selectClip(event, clip, preserveExisting = false) {
+  function selectClip(
+    event: MouseEvent,
+    clip: TimelineClip,
+    preserveExisting = false,
+  ): ClipTimelineSelection {
     const planned = planClipClick(
       canonicalState,
       $clipTimelineSelection,
@@ -576,7 +931,12 @@
     return planned.selection;
   }
 
-  function selectFrameKey(event, clip, marker, preserveExisting = false) {
+  function selectFrameKey(
+    event: MouseEvent,
+    clip: TimelineClip,
+    marker: TimelineFrameKeyMarkerLayout,
+    preserveExisting = false,
+  ): ClipTimelineSelection {
     rootEl?.focus({ preventScroll: true });
     const planned = planFrameKeyClick(
       canonicalState,
@@ -597,7 +957,12 @@
     return planned.selection;
   }
 
-  function selectPropertyKey(event, clip, marker, preserveExisting = false) {
+  function selectPropertyKey(
+    event: MouseEvent,
+    clip: TimelineClip,
+    marker: TimelinePropertyKeyMarkerLayout,
+    preserveExisting = false,
+  ): ClipTimelineSelection {
     rootEl?.focus({ preventScroll: true });
     const planned = planPropertyKeyClick(
       canonicalState,
@@ -619,7 +984,13 @@
     return planned.selection;
   }
 
-  function keyPointerDown(event, row, clip, marker, kind) {
+  function keyPointerDown(
+    event: PointerCaptureEvent,
+    row: TimelineRow,
+    clip: TimelineClip,
+    marker: TimelineKeyMarkerLayout,
+    kind: TimelineKeyKind,
+  ): void {
     event.stopPropagation();
     if (event.button !== 0) return;
     event.preventDefault();
@@ -627,21 +998,22 @@
     else if (tool === 'razor') startRazorPointer(event, row);
     else if (tool === 'tag') startTagPointer(event, row);
     else {
+      const propertyName = marker.propertyName ?? '';
       const selected = kind === 'frame'
         ? frameKeySelected($clipTimelineSelection, clip.id, marker.sourceTick)
         : propertyKeySelected(
           $clipTimelineSelection,
           clip.id,
-          marker.propertyName,
+          propertyName,
           marker.sourceTick,
         );
       const selection = kind === 'frame'
-        ? selectFrameKey(event, clip, marker, selected)
-        : selectPropertyKey(event, clip, marker, selected);
+        ? selectFrameKey(event, clip, marker as TimelineFrameKeyMarkerLayout, selected)
+        : selectPropertyKey(event, clip, marker as TimelinePropertyKeyMarkerLayout, selected);
       if (row.track.locked) return;
       const targetSelected = kind === 'frame'
         ? frameKeySelected(selection, clip.id, marker.sourceTick)
-        : propertyKeySelected(selection, clip.id, marker.propertyName, marker.sourceTick);
+        : propertyKeySelected(selection, clip.id, propertyName, marker.sourceTick);
       if (!targetSelected) return;
       capturePointer(event, {
         type: 'move-key',
@@ -651,7 +1023,10 @@
     }
   }
 
-  function runHistoryEdit(edit, guard = null) {
+  function runHistoryEdit(
+    edit: (guard: RevisionGuard | null) => unknown,
+    guard: RevisionGuard | null = null,
+  ): boolean {
     // Timeline opens only its own stroke; it must never close another editor's gesture.
     if ($playing || (guard && !isClipTimelineRevisionGuardCurrent(guard))) return false;
     if (guard) commitLayersToActiveFrame();
@@ -667,25 +1042,31 @@
     }
   }
 
-  function tagTitle(tag) {
+  function tagTitle(tag: TimelineTag | TimelineTagMarker): string {
     if (tag.type === 'loop-start') return `Loop start at tick ${tag.tick}`;
     if (tag.type === 'loop-end') return `Loop end at tick ${tag.tick}`;
-    if (tag.cluster) {
-      const shown = tag.customValues.slice(0, 3).map((value) => `“${value}”`).join(', ');
-      const remaining = tag.customCount - Math.min(3, tag.customCount);
-      return `${tag.customCount} custom tags at tick ${tag.tick}: ${shown}${remaining ? `, and ${remaining} more` : ''}`;
+    if ('cluster' in tag && tag.cluster) {
+      const customValues = tag.customValues || [];
+      const customCount = tag.customCount || customValues.length;
+      const shown = customValues.slice(0, 3).map((value) => `“${value}”`).join(', ');
+      const remaining = customCount - Math.min(3, customCount);
+      return `${customCount} custom tags at tick ${tag.tick}: ${shown}${remaining ? `, and ${remaining} more` : ''}`;
     }
     return `Custom tag “${tag.value}” at tick ${tag.tick}`;
   }
 
-  function closeTagEditor() {
+  function closeTagEditor(): void {
     tagEditor = null;
     tagType = 'custom';
     tagValue = '';
     tagTick = 0;
   }
 
-  async function openTagEditor(event, tick, tag = null) {
+  async function openTagEditor(
+    event: PositionedEvent | null,
+    tick: number | null,
+    tag: TimelineTag | TimelineTagMarker | null = null,
+  ): Promise<void> {
     if ($playing || tick == null || tick < 0 || tick >= contentDurationTicks) return;
     event?.preventDefault?.();
     event?.stopPropagation?.();
@@ -707,7 +1088,7 @@
     (tagType === 'custom' ? tagInputEl : tagTypeEl)?.focus({ preventScroll: true });
   }
 
-  async function editTag(tag) {
+  async function editTag(tag: TimelineTag): Promise<void> {
     if (!tagEditor) return;
     tagEditor = { ...tagEditor, editingId: tag.id };
     tagTick = tag.tick;
@@ -717,7 +1098,7 @@
     (tagType === 'custom' ? tagInputEl : tagTypeEl)?.focus({ preventScroll: true });
   }
 
-  function saveTag() {
+  function saveTag(): void {
     if (!tagEditor || $playing) return;
     const definition = {
       ...(tagEditor.editingId ? { id: tagEditor.editingId } : {}),
@@ -730,7 +1111,7 @@
     closeTagEditor();
   }
 
-  function deleteTag(tagId) {
+  function deleteTag(tagId: string): void {
     if ($playing) return;
     const changed = runHistoryEdit(() => Boolean(removeTimelineTag(tagId)?.changed));
     if (changed && tagEditor?.editingId === tagId) {
@@ -741,7 +1122,7 @@
     }
   }
 
-  function tagEditorKeydown(event) {
+  function tagEditorKeydown(event: KeyboardEvent): void {
     if (event.key !== 'Escape') return;
     event.preventDefault();
     event.stopImmediatePropagation();
@@ -749,7 +1130,7 @@
     focusTimeline();
   }
 
-  function markerPointerDown(event, tag) {
+  function markerPointerDown(event: PointerCaptureEvent, tag: TimelineTagMarker): void {
     if (event.button !== 0) return;
     event.preventDefault();
     event.stopPropagation();
@@ -768,7 +1149,7 @@
     capturePointer(event, { type: 'move-tag', tag: { ...tag } });
   }
 
-  function markerKeydown(event, tag) {
+  function markerKeydown(event: KeyboardEvent, tag: TimelineTagMarker): void {
     if (!['Enter', ' '].includes(event.key)) return;
     event.preventDefault();
     event.stopPropagation();
@@ -780,7 +1161,29 @@
     else seekTick(tag.tick);
   }
 
-  function executeRazor(tick, hoveredClipId = null, hoveredTrackId = null, guard = null) {
+  function isRecord(value: unknown): value is Record<string, unknown> {
+    return value !== null && typeof value === 'object' && !Array.isArray(value);
+  }
+
+  function razorRightId(result: ReturnType<typeof razorClip>): string | null {
+    const right = result?.changed ? result['right'] : null;
+    return isRecord(right) && typeof right['id'] === 'string' ? right['id'] : null;
+  }
+
+  function razorSplitRightIds(result: ReturnType<typeof razorClips>): string[] {
+    const splits = result?.changed ? result['splits'] : null;
+    return Array.isArray(splits)
+      ? splits.flatMap((split) =>
+          isRecord(split) && typeof split['rightId'] === 'string' ? [split['rightId']] : [])
+      : [];
+  }
+
+  function executeRazor(
+    tick: number,
+    hoveredClipId: string | null = null,
+    hoveredTrackId: string | null = null,
+    guard: RevisionGuard | null = null,
+  ): void {
     const canonicalPlan = planRazorClick(canonicalState, {
       tick,
       hoveredClipId,
@@ -793,21 +1196,23 @@
         canonicalPlan.tick,
         commitGuard ? { guard: commitGuard } : {},
       );
-      if (result?.changed && result.right?.id) {
-        applyTimelineSelection({ clipIds: [result.right.id] });
+      const rightId = razorRightId(result);
+      if (rightId) {
+        applyTimelineSelection({ clipIds: [rightId] });
       }
       return Boolean(result?.changed);
     }, guard);
     contextMenu = null;
   }
 
-  function commitRazorPath(edit) {
-    if (!edit.plan?.cuts?.length) return;
+  function commitRazorPath(edit: RazorPathPointerEdit): void {
+    const plan = edit.plan;
+    if (!plan?.cuts?.length) return;
     runHistoryEdit((commitGuard) => {
-      const result = razorClips(edit.plan.cuts, { guard: commitGuard });
+      const result = razorClips(plan.cuts, { guard: commitGuard });
       if (result?.changed) {
         applyTimelineSelection({
-          clipIds: result.splits.map((split) => split.rightId),
+          clipIds: razorSplitRightIds(result),
         });
       }
       return Boolean(result?.changed);
@@ -817,7 +1222,7 @@
 
   // Pointer edits hold preview plans only; the guard permits commit at pointer-up
   // only while the canonical timeline still matches pointer-down.
-  function capturePointer(event, edit) {
+  function capturePointer(event: PointerCaptureEvent, edit: PointerEditDraft): void {
     event.currentTarget.setPointerCapture?.(event.pointerId);
     const guard = captureClipTimelineRevisionGuard();
     observedMutationRevision = guard.mutationRevision;
@@ -830,10 +1235,14 @@
       moved: false,
       plan: null,
       guard,
-    };
+    } as PointerEdit;
   }
 
-  function startTagPointer(event, row, globalSurface = false) {
+  function startTagPointer(
+    event: PointerCaptureEvent,
+    row: TimelineRow | null,
+    globalSurface = false,
+  ): void {
     focusTimeline();
     const target = tagPointerTarget(event, row, globalSurface);
     hoverPreview = tagHoverPreview(target);
@@ -847,22 +1256,22 @@
     });
   }
 
-  function emptyTagLanePointerDown(event) {
+  function emptyTagLanePointerDown(event: PointerCaptureEvent): void {
     if (event.button !== 0 || $playing || tool !== 'tag') return;
     event.preventDefault();
     startTagPointer(event, null, true);
   }
 
-  function emptyTagLanePointerMove(event) {
+  function emptyTagLanePointerMove(event: PointerEvent): void {
     if (pointerEdit || $playing || tool !== 'tag') return;
     hoverPreview = tagHoverPreview(tagPointerTarget(event, null, true));
   }
 
-  function emptyTagLanePointerLeave() {
+  function emptyTagLanePointerLeave(): void {
     if (!pointerEdit && hoverPreview?.surface === 'global') hoverPreview = null;
   }
 
-  function startHeaderResize(event) {
+  function startHeaderResize(event: PointerCaptureEvent): void {
     if (event.button !== 0) return;
     event.preventDefault();
     event.stopPropagation();
@@ -877,7 +1286,7 @@
     };
   }
 
-  function finishHeaderResize(event, cancelled = false) {
+  function finishHeaderResize(event: PointerEndEvent | null, cancelled = false): boolean {
     const resize = headerResize;
     if (!resize || (event?.pointerId != null && event.pointerId !== resize.pointerId)) return false;
     headerResize = null;
@@ -896,7 +1305,7 @@
     return true;
   }
 
-  function resizeHeaderWithKey(event) {
+  function resizeHeaderWithKey(event: KeyboardEvent): void {
     const planned = resizeTrackHeaderWithKey(event, headerWidth, viewportWidth);
     if (!planned.handled) return;
     event.preventDefault();
@@ -904,7 +1313,11 @@
     trackHeaderWidth = planned.width;
   }
 
-  function startTimelineClip(event, row, clip) {
+  function startTimelineClip(
+    event: PointerCaptureEvent,
+    row: TimelineRow,
+    clip: TimelineClip,
+  ): void {
     if (event.button !== 0 || $playing) return;
     event.preventDefault();
     event.stopPropagation();
@@ -957,7 +1370,12 @@
     });
   }
 
-  function startTimelineTrim(event, row, clip, edge) {
+  function startTimelineTrim(
+    event: PointerCaptureEvent,
+    row: TimelineRow,
+    clip: TimelineClip,
+    edge: TimelineEdge,
+  ): void {
     if (event.button !== 0 || $playing) return;
     event.preventDefault();
     event.stopPropagation();
@@ -988,7 +1406,7 @@
     });
   }
 
-  function startRulerPointer(event, playheadHandle = false) {
+  function startRulerPointer(event: PointerCaptureEvent, playheadHandle = false): void {
     if (event.button !== 0) return;
     event.preventDefault();
     rootEl?.focus({ preventScroll: true });
@@ -1002,7 +1420,7 @@
     capturePointer(event, { type: 'scrub' });
   }
 
-  function startRazorPointer(event, row) {
+  function startRazorPointer(event: PointerCaptureEvent, row: TimelineRow): void {
     const point = eventTimelinePoint(event);
     hoverPreview = null;
     capturePointer(event, {
@@ -1015,7 +1433,7 @@
     });
   }
 
-  function lanePointerDown(event, row) {
+  function lanePointerDown(event: PointerCaptureEvent, row: TimelineRow): void {
     if (event.button !== 0) return;
     event.preventDefault();
     rootEl?.focus({ preventScroll: true });
@@ -1057,14 +1475,14 @@
     });
   }
 
-  function blankWorkspacePointerDown(event) {
+  function blankWorkspacePointerDown(event: PointerCaptureEvent): void {
     if (event.button !== 0 || event.target !== event.currentTarget ||
       tool !== 'select' || $playing) return;
     event.preventDefault();
     capturePointer(event, { type: 'blank-workspace' });
   }
 
-  function lanePointerMove(event, row) {
+  function lanePointerMove(event: PointerEvent, row: TimelineRow): void {
     if (pointerEdit) return;
     if ($playing) {
       hoverPreview = null;
@@ -1090,11 +1508,11 @@
     }
   }
 
-  function lanePointerLeave(row) {
+  function lanePointerLeave(row: TimelineRow): void {
     if (!pointerEdit && hoverPreview?.rowId === row.id) hoverPreview = null;
   }
 
-  function pointerMove(event) {
+  function pointerMove(event: PointerEvent): void {
     if (headerResize && event.pointerId === headerResize.pointerId) {
       if (!isClipTimelineRevisionGuardCurrent(headerResize.guard)) {
         finishHeaderResize(null, true);
@@ -1146,37 +1564,48 @@
       return;
     }
     const delta = (event.clientX - edit.startClientX) / zoom;
-    let plan = null;
-    let points = edit.points;
-    if (edit.type === 'marquee' && moved) {
+    if (edit.type === 'marquee') {
+      let plan: MarqueePlan | null = null;
+      if (moved) {
+        const point = eventTimelinePoint(event);
+        const firstRow = Math.floor(edit.startPoint.row);
+        const lastRow = Math.floor(point.row);
+        const startRow = Math.min(firstRow, lastRow);
+        const endRow = Math.max(firstRow, lastRow);
+        plan = {
+          ...planTimelineMarquee(edit.state, edit.selection, {
+            ...edit.modifiers,
+            startTick: edit.startPoint.tick,
+            endTick: point.tick,
+            trackIds: rows.slice(startRow, endRow + 1).map((row) => row.track.id),
+          }),
+          geometry: {
+            startPixel: edit.startPixel,
+            endPixel: eventTimelinePixel(event),
+            startRow,
+            endRow,
+          },
+        };
+      }
+      pointerEdit = { ...edit, moved, plan };
+      return;
+    }
+    if (edit.type === 'razor-path') {
+      let plan: RazorPathPlan | null = null;
+      let points = edit.points;
+      if (moved) {
       const point = eventTimelinePoint(event);
-      const firstRow = Math.floor(edit.startPoint.row);
-      const lastRow = Math.floor(point.row);
-      const startRow = Math.min(firstRow, lastRow);
-      const endRow = Math.max(firstRow, lastRow);
-      plan = {
-        ...planTimelineMarquee(edit.state, edit.selection, {
-          ...edit.modifiers,
-          startTick: edit.startPoint.tick,
-          endTick: point.tick,
-          trackIds: rows.slice(startRow, endRow + 1).map((row) => row.track.id),
-        }),
-        geometry: {
-          startPixel: edit.startPixel,
-          endPixel: eventTimelinePixel(event),
-          startRow,
-          endRow,
-        },
-      };
-    } else if (edit.type === 'razor-path' && moved) {
-      const point = eventTimelinePoint(event);
-      const previous = edit.points.at(-1);
+        const previous = edit.points.at(-1)!;
       points = previous.tick === point.tick && previous.row === point.row
         ? edit.points
         : [...edit.points, point];
       plan = planRazorDrag(edit.state, points, edit.rowTracks);
-    } else if (edit.type === 'duplicate-clip') {
-      plan = planClipDuplicateMove(
+      }
+      pointerEdit = { ...edit, moved, plan, points };
+      return;
+    }
+    if (edit.type === 'duplicate-clip') {
+      const plan = planClipDuplicateMove(
         edit.state,
         edit.selectedIds,
         edit.clip.id,
@@ -1188,8 +1617,11 @@
           altKey: event.altKey,
         },
       );
-    } else if (edit.type === 'move-clip') {
-      plan = planClipMove(
+      pointerEdit = { ...edit, moved, plan };
+      return;
+    }
+    if (edit.type === 'move-clip') {
+      const plan = planClipMove(
         edit.state,
         edit.selectedIds,
         edit.clip.id,
@@ -1201,8 +1633,11 @@
           altKey: event.altKey,
         },
       );
-    } else if (edit.type === 'trim-clip') {
-      plan = planClipTrim(
+      pointerEdit = { ...edit, moved, plan };
+      return;
+    }
+    if (edit.type === 'trim-clip') {
+      const plan = planClipTrim(
         edit.state,
         edit.selectedIds,
         edit.clip.id,
@@ -1216,13 +1651,18 @@
           fps: $fps,
         },
       );
-    } else if (edit.type === 'move-key') {
-      plan = planTimelineKeyMotion(edit.state, edit.selection, Math.round(delta));
+      pointerEdit = { ...edit, moved, plan };
+      return;
     }
-    pointerEdit = { ...edit, moved, plan, points };
+    if (edit.type === 'move-key') {
+      const plan = planTimelineKeyMotion(edit.state, edit.selection, Math.round(delta));
+      pointerEdit = { ...edit, moved, plan };
+      return;
+    }
+    pointerEdit = { ...edit, moved };
   }
 
-  function finishPointer(event, cancelled = false) {
+  function finishPointer(event: PointerEndEvent | null, cancelled = false): void {
     if (finishHeaderResize(event, cancelled)) return;
     const edit = pointerEdit;
     if (!edit || (event?.pointerId != null && event.pointerId !== edit.pointerId)) return;
@@ -1234,13 +1674,13 @@
     if (cancelled || !isClipTimelineRevisionGuardCurrent(edit.guard) || edit.type === 'scrub') return;
     if (edit.type === 'tag-place') {
       const pointerDistance = event ? Math.hypot(
-        event.clientX - edit.startClientX,
-        event.clientY - edit.startClientY,
+        Number(event.clientX) - edit.startClientX,
+        Number(event.clientY) - edit.startClientY,
       ) : 0;
       const plan = planTimelineTagGesture(
         edit.startTarget,
         event
-          ? tagPointerTarget(event, undefined, edit.tagSurface === 'global')
+          ? tagPointerTarget(event as MouseEvent, undefined, edit.tagSurface === 'global')
           : edit.plan?.preview,
         pointerDistance,
         edit.moved,
@@ -1252,7 +1692,7 @@
       const plan = event
         ? planTimelineTagMove(
           edit.tag,
-          event.clientX - edit.startClientX,
+          Number(event.clientX) - edit.startClientX,
           zoom,
           contentDurationTicks,
           edit.moved,
@@ -1300,29 +1740,35 @@
       applyTimelineSelection(edit.clickSelection);
       return;
     }
-    if (!edit.moved || !edit.plan) return;
-    if (edit.type === 'move-key' && edit.plan.valid && edit.plan.changed) {
+    if (!edit.moved) return;
+    if (edit.type === 'move-key' && edit.plan?.valid && edit.plan.changed) {
+      const plan = edit.plan;
       runHistoryEdit((commitGuard) => Boolean(moveTimelineKeys(
         edit.selection,
-        edit.plan.deltaTicks,
+        plan.deltaTicks,
         { guard: commitGuard },
       )?.changed), edit.guard);
-    } else if (edit.type === 'duplicate-clip' && edit.plan.valid) {
+    } else if (edit.type === 'duplicate-clip' && edit.plan?.valid) {
+      const plan = edit.plan;
       runHistoryEdit((commitGuard) => Boolean(
-        duplicateClips(edit.plan.operations, { guard: commitGuard })?.changed,
+        duplicateClips(plan.operations, { guard: commitGuard })?.changed,
       ), edit.guard);
-    } else if (edit.type === 'move-clip' && edit.plan.deltaTicks) {
+    } else if (edit.type === 'move-clip' && edit.plan?.deltaTicks) {
+      const plan = edit.plan;
       runHistoryEdit((commitGuard) => Boolean(
-        moveClips(edit.plan.operations, { guard: commitGuard })?.changed,
+        moveClips(plan.operations, { guard: commitGuard })?.changed,
       ), edit.guard);
-    } else if (edit.type === 'trim-clip' && edit.plan.deltaTicks) {
+    } else if (edit.type === 'trim-clip' && edit.plan?.deltaTicks) {
+      const plan = edit.plan;
       runHistoryEdit((commitGuard) => Boolean(
-        trimClips(edit.plan.operations, { guard: commitGuard })?.changed,
+        trimClips(plan.operations, { guard: commitGuard })?.changed,
       ), edit.guard);
     }
   }
 
-  function deleteCurrentSelection(planned = planTimelineDelete($clipTimelineSelection)) {
+  function deleteCurrentSelection(
+    planned: TimelineDeletePlan = planTimelineDelete($clipTimelineSelection),
+  ): boolean {
     if (planned && planned.kind !== 'none') {
       const changed = runHistoryEdit(() => Boolean(deleteClipSelection(planned.selection)?.changed));
       contextMenu = null;
@@ -1332,11 +1778,14 @@
     return false;
   }
 
-  function deleteContextSelection() {
-    return deleteCurrentSelection(planTimelineDelete(contextMenu?.deleteSelection));
+  function deleteContextSelection(): boolean {
+    const selection = contextMenu && 'deleteSelection' in contextMenu
+      ? contextMenu.deleteSelection
+      : undefined;
+    return deleteCurrentSelection(planTimelineDelete(selection));
   }
 
-  function handleKeydown(event) {
+  function handleKeydown(event: KeyboardEvent): void {
     if ((contextMenu || tagEditor) && event.key !== 'Escape') return;
     if (isEditingTarget(event.target)) {
       if (event.key === 'Escape' && tagEditor) {
@@ -1372,7 +1821,7 @@
     if (zoomShortcut.handled) {
       event.preventDefault();
       event.stopImmediatePropagation();
-      setZoom(zoomShortcut.zoom);
+      setZoom(Number(zoomShortcut.zoom));
       return;
     }
     const shortcutTool = timelineToolForShortcut(event, {
@@ -1408,14 +1857,14 @@
     deleteCurrentSelection(planned);
   }
 
-  function menuPosition(event, height = 190) {
+  function menuPosition(event: MouseEvent, height = 190): MenuPosition {
     return {
       x: Math.max(4, Math.min(event.clientX, window.innerWidth - 218)),
       y: Math.max(4, Math.min(event.clientY, window.innerHeight - height)),
     };
   }
 
-  function openVisualMenu(event, row, clip) {
+  function openVisualMenu(event: MouseEvent, row: TimelineRow, clip: TimelineClip): void {
     event.preventDefault();
     event.stopPropagation();
     setKeyboardContext('timeline');
@@ -1436,7 +1885,7 @@
     };
   }
 
-  function openAudioMenu(event, clip) {
+  function openAudioMenu(event: MouseEvent, clip: TimelineClip): void {
     event.preventDefault();
     event.stopPropagation();
     setKeyboardContext('timeline');
@@ -1456,7 +1905,12 @@
     };
   }
 
-  function openKeyMenu(event, clip, marker, kind) {
+  function openKeyMenu(
+    event: MouseEvent,
+    clip: TimelineClip,
+    marker: TimelineKeyMarkerLayout,
+    kind: TimelineKeyKind,
+  ): void {
     event.preventDefault();
     event.stopPropagation();
     setKeyboardContext('timeline');
@@ -1464,7 +1918,7 @@
       kind,
       clipId: clip.id,
       sourceTick: marker.sourceTick,
-      ...(kind === 'property' ? { propertyName: marker.propertyName } : {}),
+      ...(kind === 'property' ? { propertyName: marker.propertyName ?? '' } : {}),
     });
     if (planned.kind === 'none') return;
     applyTimelineSelection(planned.selection);
@@ -1473,7 +1927,7 @@
     } else {
       propertyKeyAnchor = {
         clipId: String(clip.id),
-        propertyName: marker.propertyName,
+        propertyName: marker.propertyName ?? '',
         sourceTick: Number(marker.sourceTick),
       };
     }
@@ -1489,15 +1943,25 @@
     };
   }
 
-  function openFrameKeyMenu(event, row, clip, marker) {
+  function openFrameKeyMenu(
+    event: MouseEvent,
+    row: TimelineRow,
+    clip: TimelineClip,
+    marker: TimelineFrameKeyMarkerLayout,
+  ): void {
     openKeyMenu(event, clip, marker, 'frame');
   }
 
-  function openPropertyKeyMenu(event, row, clip, marker) {
+  function openPropertyKeyMenu(
+    event: MouseEvent,
+    row: TimelineRow,
+    clip: TimelineClip,
+    marker: TimelinePropertyKeyMarkerLayout,
+  ): void {
     openKeyMenu(event, clip, marker, 'property');
   }
 
-  function openLaneMenu(event, row) {
+  function openLaneMenu(event: MouseEvent, row: TimelineRow): void {
     if (row.kind === 'group') return;
     event.preventDefault();
     setKeyboardContext('timeline');
@@ -1513,50 +1977,51 @@
     contextMenu = { kind: 'gap', ...menuPosition(event, 110) };
   }
 
-  function closeContextMenu(event) {
-    if (!event.target.closest?.('.clip-timeline-menu')) contextMenu = null;
-    if (tagEditor && !event.target.closest?.('.timeline-tag-editor') &&
-      !event.target.closest?.('.timeline-tag-marker')) closeTagEditor();
+  function closeContextMenu(event: PointerEvent): void {
+    const target = event.target instanceof Element ? event.target : null;
+    if (!target?.closest('.clip-timeline-menu')) contextMenu = null;
+    if (tagEditor && !target?.closest('.timeline-tag-editor') &&
+      !target?.closest('.timeline-tag-marker')) closeTagEditor();
   }
 
-  function stopPointerDownPropagation(event) {
+  function stopPointerDownPropagation(event: PointerEvent): void {
     event.stopPropagation();
     onpointerdown?.(event);
   }
 
-  function submitTagEditor(event) {
+  function submitTagEditor(event: SubmitEvent): void {
     event.preventDefault();
     saveTag();
   }
 
-  function resizePointerMove(event) {
+  function resizePointerMove(event: PointerEvent): void {
     event.stopPropagation();
     pointerMove(event);
   }
 
-  function resizePointerUp(event) {
+  function resizePointerUp(event: PointerEvent): void {
     event.stopPropagation();
     finishHeaderResize(event);
   }
 
-  function resizePointerCancel(event) {
+  function resizePointerCancel(event: PointerEvent): void {
     event.stopPropagation();
     finishHeaderResize(event, true);
   }
 
-  function splitMenuVisual() {
+  function splitMenuVisual(): void {
     if (menuVisualClip) {
       executeRazor($canonicalPlayheadTick, menuVisualClip.id, menuVisualClip.trackId);
     }
   }
 
-  function splitMenuAudio() {
+  function splitMenuAudio(): void {
     if (menuAudioClip) {
       executeRazor($canonicalPlayheadTick, menuAudioClip.id, menuAudioClip.trackId);
     }
   }
 
-  function toggleMenuAudioMute() {
+  function toggleMenuAudioMute(): void {
     if (!menuAudioClip) return;
     runHistoryEdit(() => {
       const changed = updateAudioClip(menuAudioClip.trackId, menuAudioClip.id, {
@@ -1568,7 +2033,7 @@
     contextMenu = null;
   }
 
-  function relinkMenuAudio() {
+  function relinkMenuAudio(): void {
     if (!menuAudioClip) return;
     window.dispatchEvent(new CustomEvent('relink-media', {
       detail: { assetId: menuAudioClip.assetId },
@@ -1576,7 +2041,7 @@
     contextMenu = null;
   }
 
-  function selectMenuTrack() {
+  function selectMenuTrack(): void {
     if (!menuVisualClip) return;
     const planned = planTrackHeaderClick(
       canonicalState,
@@ -1588,20 +2053,25 @@
     contextMenu = null;
   }
 
-  function rippleMenuGap() {
+  function rippleMenuGap(): void {
     deleteCurrentSelection();
   }
 
-  function clipEnd(clip) {
+  function clipEnd(clip: TimelineClip): number {
     return Number(clip.startTick) + Math.max(1, Number(clip.outTick) - Number(clip.inTick));
   }
 
-  function previewTimelineClip(clip, edit, rate) {
-    const plan = edit?.plan;
-    if (edit?.type === 'move-clip' && plan?.clipIds.includes(clip.id)) {
+  function previewTimelineClip(
+    clip: TimelineClip,
+    edit: PointerEdit | null,
+    rate: number,
+  ): TimelineClipView {
+    if (edit?.type === 'move-clip' && edit.plan?.clipIds.includes(clip.id)) {
+      const plan = edit.plan;
       return { ...clip, startTick: Number(clip.startTick) + plan.deltaTicks };
     }
-    if (edit?.type === 'trim-clip' && plan?.clipIds.includes(clip.id)) {
+    if (edit?.type === 'trim-clip' && edit.plan?.clipIds.includes(clip.id)) {
+      const plan = edit.plan;
       if (clip.kind === 'audio') {
         const seconds = plan.deltaTicks / Math.max(1, Number(rate) || 24);
         return plan.edge === 'start'
@@ -1627,20 +2097,28 @@
         }
         : { ...clip, outTick: Number(clip.outTick) + plan.deltaTicks };
     }
-    return clip;
+    return clip as TimelineClipView;
   }
 
-  function clipIsVisible(clip, range) {
+  function clipIsVisible(clip: TimelineClip, range: TimelineTickRange): boolean {
     return clipEnd(clip) > range.startTick && Number(clip.startTick) < range.endTick;
   }
 
-  function clipsForRow(row, state, edit, rate, range) {
+  function clipsForRow(
+    row: TimelineRow,
+    state: ClipTimelineState,
+    edit: PointerEdit | null,
+    rate: number,
+    range: TimelineTickRange,
+  ): TimelineClipView[] {
     if (row.kind === 'group') return [];
     const originals = state.clips
       .filter((clip) => String(clip.trackId) === String(row.track.id))
       .map((clip) => previewTimelineClip(clip, edit, rate));
-    const ghosts = edit?.type === 'duplicate-clip' && edit.moved && edit.plan
-      ? edit.plan.operations.flatMap((operation) => {
+    let ghosts: TimelineClipView[] = [];
+    if (edit?.type === 'duplicate-clip' && edit.moved && edit.plan) {
+      const plan = edit.plan;
+      ghosts = plan.operations.flatMap((operation) => {
           if (String(operation.trackId) !== String(row.track.id)) return [];
           const source = edit.state.clips.find((clip) =>
             String(clip.id) === String(operation.clipId));
@@ -1650,14 +2128,20 @@
             trackId: operation.trackId,
             startTick: operation.targetStartTick,
             duplicateGhost: true,
-            duplicateValid: edit.plan.valid,
+            duplicateValid: plan.valid,
           }] : [];
-        })
-      : [];
+        });
+    }
     return [...originals, ...ghosts].filter((clip) => clipIsVisible(clip, range));
   }
 
-  function boundedAudioWaveform(clip, bounds, range, transform, fpsValue) {
+  function boundedAudioWaveform(
+    clip: TimelineClipView,
+    bounds: ClipBounds,
+    range: TimelineTickRange,
+    transform: TickPixelTransform,
+    fpsValue: number,
+  ) {
     const startTick = Math.max(Number(clip.startTick), range.startTick);
     const endTick = Math.min(clipEnd(clip), range.endTick);
     const rate = Math.max(1, Number(fpsValue) || 24);
@@ -1677,17 +2161,17 @@
     };
   }
 
-  function clipBounds(clip, transform) {
+  function clipBounds(clip: TimelineClip, transform: TickPixelTransform): ClipBounds {
     const left = tickToPixel(Number(clip.startTick), transform);
     return { left, width: Math.max(1, tickToPixel(clipEnd(clip), transform) - left) };
   }
 
-  function resolvedLayerOffset(resolvedLayers, layer) {
+  function resolvedLayerOffset(resolvedLayers: EditorLayer[], layer: EditorLayer) {
     const byId = new Map(resolvedLayers.map((candidate) => [String(candidate.id), candidate]));
-    let current = layer;
+    let current: EditorLayer | null | undefined = layer;
     let x = 0;
     let y = 0;
-    const seen = new Set();
+    const seen = new Set<string>();
     while (current && !seen.has(String(current.id))) {
       seen.add(String(current.id));
       x += Number(current.offset?.x) || 0;
@@ -1697,41 +2181,54 @@
     return { x, y };
   }
 
-  function thumbnailParams(row, clip, sample) {
+  function thumbnailParams(
+    row: TimelineRow,
+    clip: TimelineClip,
+    sample: TimelineFilmstripSample,
+  ): ThumbnailParams {
     const reference = clipKind(row, clip) === 'video';
     const resolvedLayers = reference
       ? []
       : resolveClipTimelineLayers(canonicalState, sample.projectTick);
     const layer = resolvedLayers.find((candidate) =>
       String(candidate.id) === String(row.track.layer?.id));
-    const frame = layer?.visible === false ? { cells: {} } : (layer || thumbnailFrameValue(clip, sample));
+    const frame = layer?.visible === false
+      ? { cells: {} }
+      : (layer || thumbnailFrameValue(
+          clip,
+          { sourceTick: sample.sourceTick, keyIndex: -1 },
+        ));
+    const offset = layer ? resolvedLayerOffset(resolvedLayers, layer) : row.track.layer?.offset;
     return {
       model: buildFrameThumbnailModel(frame, {
         frameWidth: $dims.w,
         frameHeight: $dims.h,
-        offset: layer ? resolvedLayerOffset(resolvedLayers, layer) : row.track.layer?.offset,
+        ...(offset ? { offset } : {}),
         reference,
       }),
-      backgroundChannel: layer?.type === 'background' || layer?.shape?.channel === 'background' ||
-        row.track.layer?.type === 'background' || row.track.layer?.shape?.channel === 'background',
+      backgroundChannel: layer?.type === 'background' ||
+        (layer?.type === 'shape' && layer.shape?.channel === 'background') ||
+        row.track.layer?.type === 'background' ||
+        (row.track.layer?.type === 'shape' && row.track.layer.shape?.channel === 'background'),
       fontFamily: $canvasFont,
     };
   }
 
-  function groupKeyMarkers(track, range) {
-    const markers = new Map();
+  function groupKeyMarkers(track: TimelineTrack, range: TimelineTickRange): GroupKeyMarker[] {
+    const markers = new Map<number, string[]>();
     for (const [propertyName, keys] of Object.entries(track.propertyTracks || {})) {
       for (const key of keys || []) {
         const tick = Number(key.tick);
         if (tick < range.startTick || tick >= range.endTick) continue;
-        if (!markers.has(tick)) markers.set(tick, []);
-        markers.get(tick).push(propertyName);
+        const properties = markers.get(tick) || [];
+        properties.push(propertyName);
+        markers.set(tick, properties);
       }
     }
     return [...markers].map(([tick, properties]) => ({ tick, properties }));
   }
 
-  function clipKind(row, clip) {
+  function clipKind(row: TimelineRow, clip: TimelineClip): 'video' | 'effect' | 'visual' {
     const layerType = row.track.layer?.type;
     const kind = clip.kind || row.track.kind || layerType;
     if (kind === 'video' || layerType === 'video') return 'video';
@@ -1739,43 +2236,104 @@
     return 'visual';
   }
 
-  function clipLabel(row, clip) {
-    return clip.name || clip.sourceName || row.track.name || row.track.layer?.name || 'Clip';
+  function clipName(clip: TimelineClip): string {
+    return typeof clip['name'] === 'string' ? clip['name'] : '';
   }
 
-  function audioLabel(row, asset) {
+  function clipLabel(row: TimelineRow, clip: TimelineClipView): string {
+    const name = clipName(clip);
+    const sourceName = typeof clip['sourceName'] === 'string' ? clip['sourceName'] : '';
+    return name || sourceName || row.track.name || row.track.layer?.name || 'Clip';
+  }
+
+  function clipMuted(clip: TimelineClip): boolean {
+    return Boolean(clip['muted']);
+  }
+
+  function audioLabel(row: TimelineRow, asset: AudioRuntimeAsset | null | undefined): string {
     return asset?.sourceName || row.track.name || 'Audio';
   }
 
-  function audioAsset(assets, clip) {
-    return assets.find((asset) => asset.id === clip.assetId) || null;
+  function audioAsset(
+    assets: readonly AudioRuntimeAsset[],
+    clip: TimelineClipView,
+  ): AudioRuntimeAsset | null {
+    return assets.find((asset) => asset.id === clip['assetId']) || null;
   }
 
-  function audioSourceState(asset, statuses) {
+  function audioSourceState(
+    asset: AudioRuntimeAsset | null | undefined,
+    statuses: ReadonlyMap<string, MediaRuntimeStatus>,
+  ): 'ready' | 'missing' | 'decode-failed' | 'loading' {
     if (asset?.buffer) return 'ready';
     const state = asset?.id ? statuses.get(asset.id)?.state : null;
     return state === 'missing' || state === 'decode-failed' ? state : 'loading';
   }
 
-  function frameKeySelected(selection, clipId, sourceTick) {
+  function frameKeySelected(
+    selection: ClipTimelineSelection,
+    clipId: string,
+    sourceTick: number,
+  ): boolean {
     return selection.frameKeys.some((key) =>
       String(key.clipId) === String(clipId) && Number(key.sourceTick) === Number(sourceTick));
   }
 
-  function propertyKeySelected(selection, clipId, propertyName, sourceTick) {
+  function propertyKeySelected(
+    selection: ClipTimelineSelection,
+    clipId: string,
+    propertyName: string,
+    sourceTick: number,
+  ): boolean {
     return selection.propertyKeys.some((key) =>
       String(key.clipId) === String(clipId) &&
       key.propertyName === propertyName &&
       Number(key.sourceTick) === Number(sourceTick));
   }
 
-  function previewKeyMarker(marker, kind, edit) {
+  function keyMarkerInput(marker: FrameKeyMarker | PropertyKeyMarker): TimelineKeyMarkerInput {
+    return { ...marker };
+  }
+
+  function layoutTimelineKeyMarkers(
+    frameMarkers: FrameKeyMarker[],
+    propertyMarkers: PropertyKeyMarker[],
+    options: { pixelsPerTick: number; rowHeight: number },
+  ): TimelineKeyMarkerLayout[] {
+    const markers = planTimelineKeyMarkerLayout(
+      frameMarkers.map(keyMarkerInput),
+      propertyMarkers.map(keyMarkerInput),
+      options,
+    );
+    return markers.map((marker): TimelineKeyMarkerLayout => {
+      const layout = {
+        clipId: marker.clipId,
+        sourceTick: marker.sourceTick,
+        timelineTick: marker.timelineTick,
+        left: Number(marker['left']),
+        top: Number(marker['top']),
+        width: Number(marker['width']),
+        height: Number(marker['height']),
+        glyphSize: Number(marker['glyphSize']),
+      };
+      return marker.kind === 'property'
+        ? { ...layout, kind: 'property', propertyName: marker.propertyName || '' }
+        : { ...layout, kind: 'frame' };
+    });
+  }
+
+  function previewKeyMarker(
+    marker: TimelineKeyMarkerLayout,
+    kind: TimelineKeyKind,
+    edit: PointerEdit | null,
+  ): PreviewTimelineKeyMarker {
     if (edit?.type !== 'move-key' || !edit.plan?.moves?.length) return marker;
     const move = edit.plan.moves.find((candidate) =>
       candidate.kind === kind &&
       String(candidate.clipId) === String(marker.clipId) &&
       Number(candidate.sourceTick) === Number(marker.sourceTick) &&
-      (kind === 'frame' || candidate.propertyName === marker.propertyName));
+      (candidate.kind === 'frame' ||
+        marker.kind === 'property' && candidate.propertyName === marker.propertyName));
     if (!move) return marker;
     return {
       ...marker,
@@ -1786,7 +2344,7 @@
     };
   }
 
-  function waveform(node, params) {
+  function waveform(node: HTMLCanvasElement, params: WaveformParams) {
     let current = params;
     const color = readThemeColor('--waveform', node);
     const draw = () => {
@@ -1798,6 +2356,7 @@
       if (node.width !== width) node.width = width;
       if (node.height !== height) node.height = height;
       const context = node.getContext('2d');
+      if (!context) return;
       context.clearRect(0, 0, width, height);
       if (!buffer?.length || !buffer.numberOfChannels) return;
       const from = Math.max(0, Math.floor(inPoint * buffer.sampleRate));
@@ -1826,7 +2385,7 @@
     observer?.observe(node);
     draw();
     return {
-      update(next) {
+      update(next: WaveformParams) {
         current = next;
         draw();
       },
@@ -1836,12 +2395,45 @@
     };
   }
 
-  function gapForRow(selection, row) {
+  function gapForRow(selection: ClipTimelineSelection, row: TimelineRow) {
     const gap = selection.gap;
     return gap?.trackIds?.some((id) => String(id) === String(row.track.id)) ? gap : null;
   }
+
+  function isTimelineAudioClip(clip: TimelineClip): clip is TimelineAudioClipView {
+    return clip.kind === 'audio';
+  }
+
+  function previewTimelineTags(tags: TimelineTag[], edit: PointerEdit | null): TimelineTag[] {
+    const preview = edit?.type === 'move-tag' ? edit.plan?.tag : null;
+    return preview
+      ? tags.map((tag) => tag.id === preview.id ? preview : tag)
+      : tags;
+  }
+
+  function visualMenuClip(
+    menu: TimelineContextMenu | null,
+    state: ClipTimelineState,
+  ): TimelineClipView | null {
+    if (menu?.kind !== 'visual') return null;
+    return (state.clips.find((clip) => clip.id === menu.clipId) as TimelineClipView | undefined) || null;
+  }
+
+  function audioMenuClip(
+    menu: TimelineContextMenu | null,
+    state: ClipTimelineState,
+  ): TimelineAudioClipView | null {
+    if (menu?.kind !== 'audio') return null;
+    return state.clips.find((clip): clip is TimelineAudioClipView =>
+      clip.id === menu.clipId && isTimelineAudioClip(clip)) || null;
+  }
+
+  function noteTimelinePointerContext(event: PointerEvent): void {
+    noteKeyboardContext({ target: event.target instanceof Element ? event.target : null });
+  }
+
   let zoom = $derived(Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, Number(pixelsPerTick) || 14)));
-  let canonicalState = $derived($canonicalClipTimeline || { tracks: [], clips: [] });
+  let canonicalState = $derived(($canonicalClipTimeline || { tracks: [], clips: [] }) as ClipTimelineState);
   let sequenceTags = $derived(canonicalState.tags || []);
   let contentDurationTicks = $derived(Math.max(1, $canonicalDurationTicks));
   let loopRange = $derived(validLoopRange(sequenceTags, contentDurationTicks));
@@ -1869,17 +2461,15 @@
     Math.max(0, viewportHeight - RULER_H),
     rowHeight * 2,
   ));
-  let visibleRows = $derived(rows
+  let visibleRows = $derived<VisibleTimelineRow[]>(rows
     .slice(rowRange.startIndex, rowRange.endIndex)
     .map((row, index) => ({
       ...row,
       rowIndex: rowRange.startIndex + index,
-      top: rowPrefix.offsets[rowRange.startIndex + index],
+      top: rowPrefix.offsets[rowRange.startIndex + index] ?? 0,
     })));
   let rulerTicks = $derived(buildRulerTicks(tickRange, zoom));
-  let previewSequenceTags = $derived(pointerEdit?.type === 'move-tag' && pointerEdit.plan?.tag
-    ? sequenceTags.map((tag) => tag.id === pointerEdit.plan.tag.id ? pointerEdit.plan.tag : tag)
-    : sequenceTags);
+  let previewSequenceTags = $derived(previewTimelineTags(sequenceTags, pointerEdit));
   let visibleTagMarkers = $derived(buildTimelineTagMarkers(previewSequenceTags, tickRange));
   let movingTagId = $derived(pointerEdit?.type === 'move-tag' && pointerEdit.plan?.moved
     ? pointerEdit.tag.id
@@ -1887,15 +2477,9 @@
   let displayedSelection = $derived(pointerEdit?.type === 'marquee' && pointerEdit.moved && pointerEdit.plan
     ? pointerEdit.plan.selection
     : $clipTimelineSelection);
-  let editorTags = $derived(tagEditor
-    ? sequenceTags.filter((tag) => tag.tick === tagEditor.tick)
-    : []);
-  let menuVisualClip = $derived(contextMenu?.kind === 'visual'
-    ? canonicalState.clips.find((clip) => clip.id === contextMenu.clipId) || null
-    : null);
-  let menuAudioClip = $derived(contextMenu?.kind === 'audio'
-    ? canonicalState.clips.find((clip) => clip.id === contextMenu.clipId) || null
-    : null);
+  let editorTags = $derived(sequenceTags.filter((tag) => tag.tick === tagEditor?.tick));
+  let menuVisualClip = $derived(visualMenuClip(contextMenu, canonicalState));
+  let menuAudioClip = $derived(audioMenuClip(contextMenu, canonicalState));
   let menuAudioAsset = $derived(menuAudioClip
     ? $audioAssets.find((asset) => asset.id === menuAudioClip.assetId) || null
     : null);
@@ -1904,7 +2488,7 @@
     syncAudioMediaRequests(
       'clip-timeline',
       expanded
-        ? canonicalState.clips.filter((clip) => clip.kind === 'audio').map((clip) => clip.assetId)
+        ? canonicalState.clips.filter(isTimelineAudioClip).map((clip) => clip.assetId)
       : [],
     );
   });
@@ -1926,7 +2510,7 @@
 </script>
 
 <svelte:window
-  onpointerdowncapture={noteKeyboardContext}
+  onpointerdowncapture={noteTimelinePointerContext}
   onpointerdown={closeContextMenu}
   onpointermove={pointerMove}
   onpointerup={finishPointer}
@@ -1992,7 +2576,7 @@
           {#if pointerEdit?.type === 'marquee' && pointerEdit.moved && pointerEdit.plan?.geometry}
             {@const marquee = pointerEdit.plan.geometry}
             <div class="timeline-marquee"
-              style={`left:${headerWidth + Math.min(marquee.startPixel, marquee.endPixel)}px;top:${RULER_H + rowPrefix.offsets[marquee.startRow]}px;width:${Math.max(1, Math.abs(marquee.endPixel - marquee.startPixel))}px;height:${rowPrefix.offsets[marquee.endRow + 1] - rowPrefix.offsets[marquee.startRow]}px`}></div>
+              style={`left:${headerWidth + Math.min(marquee.startPixel, marquee.endPixel)}px;top:${RULER_H + (rowPrefix.offsets[marquee.startRow] ?? 0)}px;width:${Math.max(1, Math.abs(marquee.endPixel - marquee.startPixel))}px;height:${(rowPrefix.offsets[marquee.endRow + 1] ?? 0) - (rowPrefix.offsets[marquee.startRow] ?? 0)}px`}></div>
           {/if}
 
           {#if !rows.length}
@@ -2053,7 +2637,7 @@
                 onpointerleave={() => lanePointerLeave(row)}
                 oncontextmenu={(event) => openLaneMenu(event, row)}>
                 {#if gapForRow(displayedSelection, row)}
-                  {@const gap = gapForRow(displayedSelection, row)}
+                  {@const gap = gapForRow(displayedSelection, row)!}
                   <div class="gap-range" style={`left:${tickToPixel(gap.startTick, tickTransform)}px;width:${Math.max(1, tickToPixel(gap.endTick, tickTransform) - tickToPixel(gap.startTick, tickTransform))}px`}
                     title={`Selected gap: ${gap.endTick - gap.startTick} ticks`}></div>
                 {/if}
@@ -2089,7 +2673,7 @@
                     {@const filmstripSamples = showFilmstrip ? buildFilmstripSamples(clip, tickRange, zoom) : []}
                     {@const markers = projectFrameKeyMarkers(clip, tickTransform, tickRange)}
                     {@const propertyMarkers = planClipPropertyKeyMarkers(clip, tickRange)}
-                    {@const keyMarkers = planTimelineKeyMarkerLayout(markers, propertyMarkers, {
+                    {@const keyMarkers = layoutTimelineKeyMarkers(markers, propertyMarkers, {
                       pixelsPerTick: zoom,
                       rowHeight,
                     })}
@@ -2166,7 +2750,7 @@
                     <div class="timeline-clip audio" class:selected={displayedSelection.clipIds.has(String(clip.id))}
                       class:duplicate-ghost={clip.duplicateGhost}
                       class:invalid-duplicate={clip.duplicateGhost && !clip.duplicateValid}
-                      class:muted={clip.muted} class:missing={sourceState === 'missing' || sourceState === 'decode-failed'} class:locked={row.track.locked}
+                      class:muted={clipMuted(clip)} class:missing={sourceState === 'missing' || sourceState === 'decode-failed'} class:locked={row.track.locked}
                       role="button" tabindex="-1" aria-hidden={clip.duplicateGhost ? 'true' : undefined}
                       aria-label={`Audio clip ${audioLabel(row, asset)}`}
                       title={sourceState === 'ready'
@@ -2222,7 +2806,7 @@
         role="menu" tabindex="-1" use:popupFocus={{ initialFocus: 'button:not([disabled])' }}
         data-keyboard-context="timeline" onpointerdown={stopPointerDownPropagation}>
         {#if contextMenu.kind === 'visual' && menuVisualClip}
-          <strong>{menuVisualClip.name || 'Clip'}</strong>
+          <strong>{clipName(menuVisualClip) || 'Clip'}</strong>
           <button onclick={splitMenuVisual} disabled={$playing || contextMenu.locked}>
             <Icon icon="material-symbols:content-cut" /> Razor at playhead
           </button>
@@ -2268,11 +2852,12 @@
     {/if}
 
     {#if tagEditor}
-      <form class="timeline-tag-editor" style={`left:${tagEditor.x}px;top:${tagEditor.y}px`}
-        role="dialog" aria-label={`Edit tags at tick ${tagEditor.tick}`} tabindex="-1"
+      <dialog open class="timeline-tag-editor" style={`left:${tagEditor.x}px;top:${tagEditor.y}px`}
+        aria-label={`Edit tags at tick ${tagEditor.tick}`}
         use:popupFocus={{ initialFocus: () => tagType === 'custom' ? tagInputEl : tagTypeEl }}
-        onsubmit={submitTagEditor} onpointerdown={stopPointerDownPropagation}
+        onpointerdown={stopPointerDownPropagation}
         onkeydown={tagEditorKeydown}>
+        <form onsubmit={submitTagEditor}>
         <header>
           <strong>Tag</strong>
           <button type="button" class="tag-close" aria-label="Close tag editor"
@@ -2319,7 +2904,8 @@
             {/each}
           </div>
         {/if}
-      </form>
+        </form>
+      </dialog>
     {/if}
   </div>
 {/if}
@@ -2846,6 +3432,7 @@
     background: var(--panel-hi);
     box-shadow: 0 10px 28px var(--workspace);
   }
+  .timeline-tag-editor > form { display: contents; }
   .timeline-tag-editor header {
     display: flex;
     grid-column: 1 / -1;

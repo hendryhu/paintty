@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   import { tick } from 'svelte';
   import ProjectParameterFields from './ProjectParameterFields.svelte';
   import { dirty } from '../lib/stores.js';
@@ -20,14 +20,18 @@
     setDefaultProjectPreset,
     validateProjectDraft,
   } from '../lib/projectPresets.js';
+  import { errorText, type ProjectDraft, type ProjectPresetSettings } from '../lib/types/project-types.js';
 
-  /**
-   * @typedef {Object} Props
-   * @property {() => void} [onClose]
-   */
+  interface Props {
+    onClose?: () => void;
+  }
 
-  /** @type {Props} */
-  let { onClose = () => {} } = $props();
+  interface PendingPresetDeletion {
+    id: string;
+    name: string;
+  }
+
+  let { onClose = () => {} }: Props = $props();
   const initialSettings = loadProjectPresetSettings();
   const initialPresetId = initialSettings.lastUsed.presetId;
   let settings = $state(initialSettings);
@@ -39,11 +43,11 @@
   let presetName = $state(initialPreset && !initialPreset.builtIn ? initialPreset.name : '');
   let presetError = $state('');
   let confirmingCreate = $state(false);
-  let pendingPresetDeletion = $state(null);
+  let pendingPresetDeletion = $state<PendingPresetDeletion | null>(null);
   let busy = $state(false);
-  let dialog = $state();
-  let cancelConfirmationButton = $state();
-  let deletePresetButton = $state();
+  let dialog = $state<HTMLDivElement>();
+  let cancelConfirmationButton = $state<HTMLButtonElement>();
+  let deletePresetButton = $state<HTMLButtonElement>();
 
   let presets = $derived(allProjectPresets(settings));
   let userPresets = $derived(presets.filter((preset) => !preset.builtIn));
@@ -53,18 +57,18 @@
   function close() {
     if (!busy) onClose();
   }
-  function currentDraft() {
+  function currentDraft(): ProjectDraft {
     return { columns, rows, baseFps };
   }
-  function applySettings(next) {
+  function applySettings(next: ProjectPresetSettings): void {
     settings = next;
     try {
       settings = persistProjectPresetSettings(settings);
-    } catch (error) {
-      notifyError(`Could not save project presets: ${error.message}`);
+    } catch (error: unknown) {
+      notifyError(`Could not save project presets: ${errorText(error)}`);
     }
   }
-  function applyLastUsed(next) {
+  function applyLastUsed(next: ProjectPresetSettings): void {
     applySettings(next);
     selectedPresetId = settings.lastUsed.presetId;
     columns = settings.lastUsed.draft.columns;
@@ -78,22 +82,22 @@
     try {
       applySettings(rememberProjectDraft(settings, currentDraft(), selectedPresetId));
       presetError = '';
-    } catch (error) {
-      presetError = error.message;
+    } catch (error: unknown) {
+      presetError = errorText(error);
     }
   }
   function choosePreset() {
     try {
       applyLastUsed(selectProjectPreset(settings, selectedPresetId));
-    } catch (error) {
-      presetError = error.message;
+    } catch (error: unknown) {
+      presetError = errorText(error);
     }
   }
   function savePreset() {
     try {
       applyLastUsed(saveUserProjectPreset(settings, presetName, currentDraft()));
-    } catch (error) {
-      presetError = error.message;
+    } catch (error: unknown) {
+      presetError = errorText(error);
     }
   }
   function renamePreset() {
@@ -101,8 +105,8 @@
       applySettings(renameUserProjectPreset(settings, selectedPresetId, presetName));
       presetName = projectPresetById(settings, selectedPresetId)?.name || '';
       presetError = '';
-    } catch (error) {
-      presetError = error.message;
+    } catch (error: unknown) {
+      presetError = errorText(error);
     }
   }
   function requestPresetDeletion() {
@@ -119,17 +123,17 @@
       const next = deleteUserProjectPreset(settings, pendingPresetDeletion.id);
       pendingPresetDeletion = null;
       applyLastUsed(next);
-      tick().then(() => dialog?.querySelector('#new-project-preset')?.focus({ preventScroll: true }));
-    } catch (error) {
-      presetError = error.message;
+      tick().then(() => dialog?.querySelector<HTMLElement>('#new-project-preset')?.focus({ preventScroll: true }));
+    } catch (error: unknown) {
+      presetError = errorText(error);
     }
   }
   function makeDefault() {
     try {
       applySettings(setDefaultProjectPreset(settings, selectedPresetId));
       presetError = '';
-    } catch (error) {
-      presetError = error.message;
+    } catch (error: unknown) {
+      presetError = errorText(error);
     }
   }
   function resetDefault() {
@@ -140,8 +144,8 @@
       validateProjectDraft(currentDraft());
       rememberDraft();
       if (presetError) return;
-    } catch (error) {
-      notifyError(`Could not create project: ${error.message}`);
+    } catch (error: unknown) {
+      notifyError(`Could not create project: ${errorText(error)}`);
       return;
     }
     if ($dirty) {
@@ -155,8 +159,8 @@
     try {
       await replaceWithBlankProject(currentDraft());
       onClose();
-    } catch (error) {
-      notifyError(`Could not create project: ${error.message}`);
+    } catch (error: unknown) {
+      notifyError(`Could not create project: ${errorText(error)}`);
       confirmingCreate = false;
     } finally {
       busy = false;
@@ -170,7 +174,7 @@
     tick().then(() => {
       const target = returnToDelete
         ? deletePresetButton
-        : dialog?.querySelector('input, select, button:not([disabled])');
+        : dialog?.querySelector<HTMLElement>('input, select, button:not([disabled])');
       target?.focus({ preventScroll: true });
     });
   }
@@ -179,8 +183,7 @@
       tick().then(() => cancelConfirmationButton?.focus({ preventScroll: true }));
     }
   });
-  function backdropClick(event) { if (event.target === event.currentTarget) close(); }
-  function onKey(event) {
+  function onKey(event: KeyboardEvent) {
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'n') {
       event.preventDefault();
       event.stopImmediatePropagation();
@@ -188,7 +191,8 @@
     }
     if (event.key !== 'Escape' || busy) return;
     if (!confirmingCreate && !pendingPresetDeletion &&
-      event.target.closest?.('.number-field[data-dirty="true"]')) return;
+      event.target instanceof Element &&
+      event.target.closest('.number-field[data-dirty="true"]')) return;
     event.preventDefault();
     event.stopImmediatePropagation();
     if (confirmingCreate || pendingPresetDeletion) cancelConfirmation();
@@ -198,8 +202,8 @@
 
 <svelte:window onkeydowncapture={onKey} />
 
-<div class="modal-backdrop" onclick={backdropClick} role="presentation">
-  <section class="modal-dialog new-project-dialog" role="dialog" aria-modal="true"
+<div class="modal-backdrop" role="presentation">
+  <div class="modal-dialog new-project-dialog" role="dialog" aria-modal="true"
     aria-labelledby="new-project-title" tabindex="-1" bind:this={dialog}
     use:popupFocus={{ initialFocus: 'input, select, button:not([disabled])' }}>
     <header class="modal-head">
@@ -211,7 +215,7 @@
       <div class="confirmation">
         <p><strong>{pendingPresetDeletion.name}</strong> will be removed.</p>
       </div>
-      <footer>
+      <footer class="ui-dialog-footer">
         <button class="secondary-button" type="button" bind:this={cancelConfirmationButton}
           onclick={cancelConfirmation}>Cancel</button>
         <button class="danger-button" type="button" onclick={confirmPresetDeletion}>Delete</button>
@@ -220,7 +224,7 @@
       <div class="confirmation">
         <p>The current project has unsaved changes. A recovery checkpoint will be created before it is replaced.</p>
       </div>
-      <footer>
+      <footer class="ui-dialog-footer">
         <button class="secondary-button" type="button" disabled={busy} bind:this={cancelConfirmationButton}
           onclick={cancelConfirmation}>Cancel</button>
         <button class="danger-button" type="button" disabled={busy} onclick={createProject}>
@@ -270,12 +274,12 @@
           {#if !selectedIsUser}<p class="hint">Built-in presets cannot be renamed or deleted.</p>{/if}
         </section>
       </div>
-      <footer>
+      <footer class="ui-dialog-footer">
         <button class="secondary-button" type="button" onclick={close}>Cancel</button>
         <button class="primary-button" type="button" onclick={requestCreate}>Create</button>
       </footer>
     {/if}
-  </section>
+  </div>
 </div>
 
 <style>
@@ -296,10 +300,7 @@
   .hint { color: var(--text-faint); }
   .error { color: var(--danger); }
   .confirmation { padding: 18px 16px; color: var(--text); font-size: 12px; line-height: 1.55; }
-  footer {
-    display: flex; flex: 0 0 auto; justify-content: flex-end; gap: 8px; padding: 10px 12px;
-    border-top: 1px solid var(--border);
-  }
+  .ui-dialog-footer { flex: 0 0 auto; border-top: 1px solid var(--border); }
   footer .danger-button { padding: 7px 12px; font-size: 12px; }
   @media (max-width: 440px) {
     .new-project-dialog { width: calc(100vw - 16px); max-height: calc(100dvh - 16px); }

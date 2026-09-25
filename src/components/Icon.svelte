@@ -1,11 +1,25 @@
-<script>
+<script lang="ts">
   import OfflineIcon from '@iconify/svelte/dist/OfflineIcon.svelte';
   import { ICON_DATA } from '../lib/iconData.js';
+  import type { IconProps as OfflineIconProps } from '@iconify/svelte/dist/OfflineIcon.svelte';
+  import type { IconifyIcon } from '@iconify/types';
+  import type { SvelteHTMLElements } from 'svelte/elements';
 
-  let { icon, ...rest } = $props();
+  type Props = Omit<
+    SvelteHTMLElements['svg'] & OfflineIconProps & Record<`data-${string}`, string>,
+    'icon'
+  > & {
+    icon: string;
+  };
 
-  let warnedIcon = $state();
-  let iconData = $derived(ICON_DATA[icon]);
+  let { icon, ...rest }: Props = $props();
+
+  function isBundledIcon(name: string): name is keyof typeof ICON_DATA {
+    return Object.hasOwn(ICON_DATA, name);
+  }
+
+  let warnedIcon = $state<string | null>(null);
+  let iconData = $derived<IconifyIcon | undefined>(isBundledIcon(icon) ? ICON_DATA[icon] : undefined);
   $effect(() => {
     if (!iconData && import.meta.env.DEV && warnedIcon !== icon) {
       warnedIcon = icon;

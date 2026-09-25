@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   import Icon from './Icon.svelte';
   import { tick } from 'svelte';
   import { activeChar, addFavourite, favourites } from '../lib/stores.js';
@@ -8,69 +8,68 @@
   import { canvasFont } from '../lib/font.js';
   import { nerdGlyphs } from '../lib/nerdglyphs.js';
   import { isTopPopup, popupFocus } from '../lib/popupFocus.js';
+  import type { CharacterTab } from '../lib/charTabs.js';
+  import type { NerdGlyph } from '../lib/nerdglyphs.js';
+  import type {
+    CharPickerProps,
+    CustomGlyphInputState,
+  } from '../lib/types/canvas-components.js';
 
-  /**
-   * @typedef {Object} Props
-   * @property {(detail: { x: number, y: number, ch: string }) => void} [onGlyphMenu]
-   * @property {(detail: { top: number }) => void} [onSketch]
-   */
-
-  /** @type {Props} */
   let {
     onGlyphMenu = () => {},
     onSketch = () => {},
-  } = $props();
+  }: CharPickerProps = $props();
 
-  let activeTab = $state('fav');
-  let sketchBtnEl = $state();
-  let customGlyph = $state('');
-  let addGlyphEl = $state();
-  let customInputEl = $state();
-  let customOpen = $state(false);
-  let customPopoverEl = $state();
-  let customPosition = $state({ x: 0, y: 0 });
+  let activeTab = $state<string>('fav');
+  let sketchBtnEl = $state<HTMLButtonElement | null>(null);
+  let customGlyph = $state<string>('');
+  let addGlyphEl = $state<HTMLButtonElement | null>(null);
+  let customInputEl = $state<HTMLInputElement | null>(null);
+  let customOpen = $state<boolean>(false);
+  let customPopoverEl = $state<HTMLDialogElement | null>(null);
+  let customPosition = $state<{ x: number; y: number }>({ x: 0, y: 0 });
   const customGlyphHistory = createControlledTextHistory();
-  let pendingGlyph = $derived(firstGrapheme(customGlyph));
+  let pendingGlyph = $derived<string>(firstGrapheme(customGlyph));
 
-  let nfGroup = $state(null);
-  let nfSearch = $state('');
-  let nfFilterOpen = $state(false);
-  let nfFilterButton = $state();
-  let nfFilterMenuEl = $state();
-  let nfFilterPosition = $state({ x: 0, y: 0 });
+  let nfGroup = $state<string | null>(null);
+  let nfSearch = $state<string>('');
+  let nfFilterOpen = $state<boolean>(false);
+  let nfFilterButton = $state<HTMLButtonElement | null>(null);
+  let nfFilterMenuEl = $state<HTMLDivElement | null>(null);
+  let nfFilterPosition = $state<{ x: number; y: number }>({ x: 0, y: 0 });
   const NF_PAGE = 300;
-  let nfShown = $state(NF_PAGE);
+  let nfShown = $state<number>(NF_PAGE);
 
-  let currentTabDef = $derived(CHAR_TABS.find((t) => t.id === activeTab));
-  let chars = $derived((activeTab !== 'nf' && currentTabDef) ? charsForTab(currentTabDef, $favourites) : []);
+  let currentTabDef = $derived<CharacterTab | undefined>(CHAR_TABS.find((t) => t.id === activeTab));
+  let chars = $derived<string[]>((activeTab !== 'nf' && currentTabDef) ? charsForTab(currentTabDef, $favourites) : []);
 
-  let nfAll = $derived($nerdGlyphs.ready
+  let nfAll = $derived<NerdGlyph[]>($nerdGlyphs.ready
     ? (nfGroup ? ($nerdGlyphs.groups.find((g) => g.id === nfGroup)?.glyphs ?? []) : $nerdGlyphs.all)
     : []);
-  let nfMatched = $derived((() => {
+  let nfMatched = $derived<NerdGlyph[]>((() => {
     const q = nfSearch.trim().toLowerCase();
     return q ? nfAll.filter((g) => g.names.some((n) => n.includes(q))) : nfAll;
   })());
   $effect(() => { nfGroup; nfSearch; nfShown = NF_PAGE; });
-  let nfFiltered = $derived(nfMatched.slice(0, nfShown));
+  let nfFiltered = $derived<NerdGlyph[]>(nfMatched.slice(0, nfShown));
 
-  function onNfScroll(e) {
-    const el = e.target;
+  function onNfScroll(event: Event & { currentTarget: HTMLDivElement }): void {
+    const el = event.currentTarget;
     if (el.scrollTop + el.clientHeight >= el.scrollHeight - 60 && nfShown < nfMatched.length) {
       nfShown += NF_PAGE;
     }
   }
 
-  function selectChar(ch) {
+  function selectChar(ch: string): void {
     activeChar.set(ch);
     closeCustomGlyph();
   }
-  function selectTab(id) {
+  function selectTab(id: string): void {
     activeTab = id;
     if (id !== 'fav') closeCustomGlyph();
     if (id !== 'nf') closeNfFilter();
   }
-  async function toggleNfFilter() {
+  async function toggleNfFilter(): Promise<void> {
     if (nfFilterOpen) {
       closeNfFilter();
       return;
@@ -89,14 +88,14 @@
     nfFilterOpen = true;
     await tick();
   }
-  function closeNfFilter() {
+  function closeNfFilter(): void {
     nfFilterOpen = false;
   }
-  function chooseNfGroup(id) {
+  function chooseNfGroup(id: string | null): void {
     nfGroup = id;
     closeNfFilter();
   }
-  async function openCustomGlyph() {
+  async function openCustomGlyph(): Promise<void> {
     if (customOpen) {
       closeCustomGlyph();
       return;
@@ -115,12 +114,12 @@
     await tick();
     customInputEl?.focus();
   }
-  function closeCustomGlyph() {
+  function closeCustomGlyph(): void {
     customOpen = false;
     customGlyph = '';
     customGlyphHistory.reset();
   }
-  function customGlyphState() {
+  function customGlyphState(): CustomGlyphInputState {
     return {
       value: customGlyph,
       start: customInputEl?.selectionStart ?? customGlyph.length,
@@ -128,16 +127,16 @@
       direction: customInputEl?.selectionDirection || 'none',
     };
   }
-  function onCustomGlyphBeforeInput(event) {
+  function onCustomGlyphBeforeInput(event: InputEvent): void {
     customGlyphHistory.beforeInput(event, customGlyphState());
   }
-  function typeCustomGlyph(event) {
+  function typeCustomGlyph(event: Event & { currentTarget: HTMLInputElement }): void {
     const next = firstGrapheme(event.currentTarget.value);
     customGlyphHistory.input(next !== customGlyph);
     customGlyph = next;
     if (event.currentTarget.value !== customGlyph) event.currentTarget.value = customGlyph;
   }
-  async function restoreCustomGlyph(state) {
+  async function restoreCustomGlyph(state: CustomGlyphInputState): Promise<void> {
     if (!customOpen) return;
     customGlyph = state.value;
     await tick();
@@ -145,13 +144,13 @@
     customInputEl.focus({ preventScroll: true });
     customInputEl.setSelectionRange(state.start, state.end, state.direction);
   }
-  function saveCustomGlyph() {
+  function saveCustomGlyph(): void {
     if (!pendingGlyph) return;
     addFavourite(pendingGlyph);
     selectChar(pendingGlyph);
     closeCustomGlyph();
   }
-  function onCustomGlyphKeydown(event) {
+  function onCustomGlyphKeydown(event: KeyboardEvent): void {
     if (customGlyphHistory.keydown(event, customGlyphState(), restoreCustomGlyph)) return;
     if (event.key === 'Escape') {
       event.preventDefault();
@@ -164,15 +163,16 @@
       saveCustomGlyph();
     }
   }
-  function closePopoversOnOutsidePointer(event) {
-    if (customOpen && !event.target.closest?.('.custom-popover') && !event.target.closest?.('.add-glyph')) {
+  function closePopoversOnOutsidePointer(event: PointerEvent): void {
+    const target = event.target instanceof Element ? event.target : null;
+    if (customOpen && !target?.closest('.custom-popover') && !target?.closest('.add-glyph')) {
       closeCustomGlyph();
     }
-    if (nfFilterOpen && !event.target.closest?.('.nf-filter-menu') && !event.target.closest?.('.nf-filter-button')) {
+    if (nfFilterOpen && !target?.closest('.nf-filter-menu') && !target?.closest('.nf-filter-button')) {
       closeNfFilter();
     }
   }
-  function onWindowKey(event) {
+  function onWindowKey(event: KeyboardEvent): void {
     if (event.key !== 'Escape') return;
     const closeFilter = nfFilterOpen && isTopPopup(nfFilterMenuEl);
     const closeCustom = customOpen && isTopPopup(customPopoverEl);
@@ -182,9 +182,16 @@
     if (closeFilter) closeNfFilter();
     else closeCustomGlyph();
   }
-  function onContext(e, ch) { e.preventDefault(); onGlyphMenu({ x: e.clientX, y: e.clientY, ch }); }
-  function openSketch() { const r = sketchBtnEl.getBoundingClientRect(); onSketch({ top: r.top }); }
-  function submitCustomGlyph(event) {
+  function onContext(event: MouseEvent, ch: string): void {
+    event.preventDefault();
+    onGlyphMenu({ x: event.clientX, y: event.clientY, ch });
+  }
+  function openSketch(): void {
+    if (!sketchBtnEl) return;
+    const rect = sketchBtnEl.getBoundingClientRect();
+    onSketch({ top: rect.top });
+  }
+  function submitCustomGlyph(event: SubmitEvent): void {
     event.preventDefault();
     saveCustomGlyph();
   }
@@ -193,7 +200,7 @@
 <svelte:window onpointerdown={closePopoversOnOutsidePointer} onkeydowncapture={onWindowKey} />
 
 <div class="charsect">
-  <div class="section-title">Character</div>
+  <div class="ui-panel-title section-title">Character</div>
 
   <div class="char-tabs">
     {#each CHAR_TABS as t}
@@ -213,7 +220,7 @@
           aria-haspopup="menu" aria-expanded={nfFilterOpen} onclick={toggleNfFilter}>Filter</button>
       </div>
       {#if nfFilterOpen}
-        <div class="nf-filter-menu" role="menu" tabindex="-1" bind:this={nfFilterMenuEl}
+        <div class="nf-filter-menu scroll" role="menu" tabindex="-1" bind:this={nfFilterMenuEl}
           use:popupFocus={{ initialFocus: nfGroup === null ? '[data-group="all"]' : `[data-group="${nfGroup}"]` }}
           style="left: {nfFilterPosition.x}px; top: {nfFilterPosition.y}px;">
           <button role="menuitemradio" aria-checked={nfGroup === null} data-group="all"
@@ -256,16 +263,18 @@
       <Icon icon="material-symbols:add-rounded" width="18" />
     </button>
     {#if customOpen}
-      <form class="custom-popover" style="left: {customPosition.x}px; top: {customPosition.y}px;"
-        role="dialog" aria-label="Add favourite glyph" tabindex="-1" bind:this={customPopoverEl}
-        use:popupFocus={{ initialFocus: 'input' }} onsubmit={submitCustomGlyph}>
-        <input bind:this={customInputEl} aria-label="Favourite glyph" placeholder="Glyph"
-          style="font-family: {$canvasFont};" value={customGlyph}
-          onbeforeinput={onCustomGlyphBeforeInput} oninput={typeCustomGlyph}
-          onkeydown={onCustomGlyphKeydown} />
-        <button class="custom-add" type="submit" disabled={!pendingGlyph}>Add</button>
-        <button class="custom-close" type="button" onclick={closeCustomGlyph} aria-label="Close">&times;</button>
-      </form>
+      <dialog open class="custom-popover" style="left: {customPosition.x}px; top: {customPosition.y}px;"
+        aria-label="Add favourite glyph" bind:this={customPopoverEl}
+        use:popupFocus={{ initialFocus: 'input' }}>
+        <form onsubmit={submitCustomGlyph}>
+          <input bind:this={customInputEl} aria-label="Favourite glyph" placeholder="Glyph"
+            style="font-family: {$canvasFont};" value={customGlyph}
+            onbeforeinput={onCustomGlyphBeforeInput} oninput={typeCustomGlyph}
+            onkeydown={onCustomGlyphKeydown} />
+          <button class="custom-add" type="submit" disabled={!pendingGlyph}>Add</button>
+          <button class="custom-close" type="button" onclick={closeCustomGlyph} aria-label="Close">&times;</button>
+        </form>
+      </dialog>
     {/if}
   {/if}
 </div>
@@ -274,10 +283,6 @@
   .charsect {
     display: flex; flex-direction: column; border-bottom: 1px solid var(--border);
     position: relative; overflow: hidden; height: 100%;
-  }
-  .section-title {
-    font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px;
-    color: var(--text-dim); padding: 8px 10px 6px;
   }
   .char-tabs {
     display: flex; flex-wrap: wrap; gap: 2px; padding: 6px;
@@ -302,7 +307,7 @@
   }
   .nf-filter-button:hover, .nf-filter-button.on { color: var(--text); border-color: var(--accent); }
   .nf-filter-menu {
-    position: fixed; z-index: 90; display: grid; width: 188px; max-height: 292px;
+    position: fixed; z-index: var(--z-popover); display: grid; width: 188px; max-height: 292px;
     overflow-y: auto; padding: 4px; background: var(--panel-hi); border: 1px solid var(--border);
     border-radius: var(--radius); box-shadow: 0 6px 18px var(--shadow-popover-strong);
   }
@@ -340,13 +345,14 @@
   .add-glyph :global(svg) { display: block; }
   .add-glyph:hover, .add-glyph.open { border-color: var(--accent); color: var(--accent); }
   .custom-popover {
-    position: fixed; z-index: 80;
+    position: fixed; z-index: var(--z-menu);
     display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 6px;
     width: 220px; padding: 9px;
     box-sizing: border-box;
     background: var(--panel-hi); border: 1px solid var(--border); border-radius: var(--radius);
     box-shadow: 0 5px 16px var(--shadow-popover-strong);
   }
+  .custom-popover form { display: contents; }
   .custom-popover input {
     min-width: 0; width: 100%; height: 28px; padding: 3px 7px;
     background: var(--canvas-bg); color: var(--text); border: 1px solid var(--border);

@@ -1,22 +1,34 @@
-<script module>
-  const CANVAS_OVERSCAN = 2;
-  const canvasDimensionAdapters = new WeakMap();
+<script module lang="ts">
+  import type { EditorPoint as CanvasModulePoint, EditorSize } from '../lib/types/editor-domain.js';
+  import type {
+    CanvasBackingLayout,
+    CanvasViewport,
+  } from '../lib/types/canvas-components.js';
 
-  function finiteCanvasNumber(value, fallback) {
+  const CANVAS_OVERSCAN = 2;
+  const canvasDimensionAdapters = new WeakMap<HTMLCanvasElement, HTMLCanvasElement>();
+
+  function finiteCanvasNumber(value: unknown, fallback: number): number {
     const number = Number(value);
     return Number.isFinite(number) ? number : fallback;
   }
 
-  function visibleCanvasViewport(viewportSize, documentSize, cellSize, pan, overscan = CANVAS_OVERSCAN) {
-    const viewportW = Math.max(1, finiteCanvasNumber(viewportSize?.w, 1));
-    const viewportH = Math.max(1, finiteCanvasNumber(viewportSize?.h, 1));
-    const documentW = Math.max(1, finiteCanvasNumber(documentSize?.w, 1));
-    const documentH = Math.max(1, finiteCanvasNumber(documentSize?.h, 1));
-    const cellW = Math.max(1, finiteCanvasNumber(cellSize?.w, 1));
-    const cellH = Math.max(1, finiteCanvasNumber(cellSize?.h, 1));
+  function visibleCanvasViewport(
+    viewportSize: EditorSize,
+    documentSize: EditorSize,
+    cellSize: EditorSize,
+    pan: CanvasModulePoint,
+    overscan = CANVAS_OVERSCAN,
+  ): CanvasViewport {
+    const viewportW = Math.max(1, finiteCanvasNumber(viewportSize.w, 1));
+    const viewportH = Math.max(1, finiteCanvasNumber(viewportSize.h, 1));
+    const documentW = Math.max(1, finiteCanvasNumber(documentSize.w, 1));
+    const documentH = Math.max(1, finiteCanvasNumber(documentSize.h, 1));
+    const cellW = Math.max(1, finiteCanvasNumber(cellSize.w, 1));
+    const cellH = Math.max(1, finiteCanvasNumber(cellSize.h, 1));
     const extra = Math.max(0, Math.floor(finiteCanvasNumber(overscan, CANVAS_OVERSCAN)));
-    const originX = (viewportW - documentW * cellW) / 2 + finiteCanvasNumber(pan?.x, 0);
-    const originY = (viewportH - documentH * cellH) / 2 + finiteCanvasNumber(pan?.y, 0);
+    const originX = (viewportW - documentW * cellW) / 2 + finiteCanvasNumber(pan.x, 0);
+    const originY = (viewportH - documentH * cellH) / 2 + finiteCanvasNumber(pan.y, 0);
     const x = Math.floor(-originX / cellW) - extra;
     const y = Math.floor(-originY / cellH) - extra;
     const right = Math.ceil((viewportW - originX) / cellW) + extra;
@@ -24,12 +36,19 @@
     return { x, y, w: Math.max(1, right - x), h: Math.max(1, bottom - y) };
   }
 
-  function incrementCanvasMetric(canvas, key) {
-    if (!canvas.dataset) return;
+  function viewportLocalPoint(point: CanvasModulePoint, viewport: CanvasViewport): CanvasModulePoint {
+    return { x: point.x - viewport.x, y: point.y - viewport.y };
+  }
+
+  function incrementCanvasMetric(canvas: HTMLCanvasElement, key: string): void {
     canvas.dataset[key] = String((Number(canvas.dataset[key]) || 0) + 1);
   }
 
-  function assignCanvasDimension(canvas, dimension, value) {
+  function assignCanvasDimension(
+    canvas: HTMLCanvasElement,
+    dimension: 'width' | 'height',
+    value: unknown,
+  ): boolean {
     const next = Math.max(0, Math.round(finiteCanvasNumber(value, 0)));
     if (canvas[dimension] === next) return false;
     canvas[dimension] = next;
@@ -37,13 +56,21 @@
     return true;
   }
 
-  function setCanvasPixelStyle(canvas, property, value) {
-    if (!canvas.style) return;
+  function setCanvasPixelStyle(
+    canvas: HTMLCanvasElement,
+    property: 'width' | 'height' | 'left' | 'top',
+    value: number,
+  ): void {
     const next = `${value}px`;
     if (canvas.style[property] !== next) canvas.style[property] = next;
   }
 
-  function sizeCanvasBacking(canvas, cssWidth, cssHeight, dpr = 1) {
+  function sizeCanvasBacking(
+    canvas: HTMLCanvasElement,
+    cssWidth: number,
+    cssHeight: number,
+    dpr = 1,
+  ): CanvasBackingLayout {
     const width = Math.max(0, finiteCanvasNumber(cssWidth, 0));
     const height = Math.max(0, finiteCanvasNumber(cssHeight, 0));
     const ratio = Math.max(0.01, finiteCanvasNumber(dpr, 1));
@@ -61,7 +88,12 @@
     };
   }
 
-  function layoutViewportCanvas(canvas, viewport, cellSize, dpr) {
+  function layoutViewportCanvas(
+    canvas: HTMLCanvasElement,
+    viewport: CanvasViewport,
+    cellSize: EditorSize,
+    dpr: number,
+  ): CanvasBackingLayout {
     const cssWidth = viewport.w * cellSize.w;
     const cssHeight = viewport.h * cellSize.h;
     const layout = sizeCanvasBacking(canvas, cssWidth, cssHeight, dpr);
@@ -70,7 +102,7 @@
     return layout;
   }
 
-  function canvasWithStableDimensions(canvas) {
+  function canvasWithStableDimensions(canvas: HTMLCanvasElement): HTMLCanvasElement {
     let adapter = canvasDimensionAdapters.get(canvas);
     if (adapter) return adapter;
     adapter = {
@@ -79,14 +111,16 @@
       get height() { return canvas.height; },
       set height(value) { assignCanvasDimension(canvas, 'height', value); },
       style: canvas.style,
-      getContext(...args) { return canvas.getContext(...args); },
-    };
+      getContext(...args: Parameters<HTMLCanvasElement['getContext']>) {
+        return Reflect.apply(canvas.getContext, canvas, args);
+      },
+    } as HTMLCanvasElement;
     canvasDimensionAdapters.set(canvas, adapter);
     return adapter;
   }
 </script>
 
-<script>
+<script lang="ts">
   import { onDestroy, onMount, tick, untrack } from 'svelte';
   import { captureProjectRevision, onProjectReplaced } from '../lib/documentLifecycle.js';
   import { get } from 'svelte/store';
@@ -105,7 +139,7 @@
            getLayer, getCell, getComposited, activeLayerId, activeLayerPart, selectLayer, setLayerOffsetDirect, setCells,
            translateLayerCells, setEffectMaskOffsetDirect, groupOf, effOffset, effVisible, layerBox, applyBlinkPhase, compositeWorld,
            hasVisibleBlinkingGlyph,
-           cropPending, isBackgroundLayer, isEditingEffectMask, noteAuthoredMutation } from '../lib/grid.js';
+            cropPending, isBackgroundLayer, isEditingContentMask, isEditingEffectMask, noteAuthoredMutation } from '../lib/grid.js';
   import {
     applyTool,
     displayedSampleCell,
@@ -149,11 +183,11 @@
   import { bitsForStroke, applySubcell } from '../lib/subcell.js';
   import { isWide } from '../lib/width.js';
   import { selection, isSelected, applyRegion, selectionModeForModifiers,
-           moveState, beginMove, beginTransformSelection, updateMove, updateTransformBounds,
+           moveState, beginMove, updateMove, updateTransformBounds,
            finalizeMove, cancelMove, minimumTransformWidth, transformBoundsFromDrag,
            TRANSFORM_HANDLES,
            selectionToNewLayer, clearSelection, key as selectionKey } from '../lib/selection.js';
-  import { metricsForCellWidth, drawGrid, drawGlyph, drawOnionCells } from '../lib/render.js';
+  import { canvasBackingScale, metricsForCellWidth, drawGrid, drawGlyph, drawOnionCells } from '../lib/render.js';
   import { readThemeColor } from '../lib/themeColors.js';
   import { normalizeOutputGrid } from '../lib/outputGrid.js';
   import {
@@ -189,6 +223,7 @@
   import {
     pickShapeTransformHandle,
     shapeHandleDragTarget,
+    shapeRotationAngle,
     shapeTransformCageVertices,
     shapeTransformHandles,
     transformShapeFromCageHandle,
@@ -198,10 +233,12 @@
     applyRasterBodyDrag,
     captureRasterBodyDrag,
     rasterBodyDelta,
+    type RasterSnapGuides,
   } from '../lib/rasterBodyDrag.js';
   import {
     rasterDisplayGeometry,
     rasterLayerSourceSize,
+    rasterScaleFromDrag,
   } from '../lib/layerPosition.js';
   import {
     captureGestureOwner,
@@ -211,78 +248,163 @@
     gesturePointerMatches,
     moveToolChangeAction,
   } from '../lib/gestureOwnership.js';
+  import type { Readable } from 'svelte/store';
+  import type {
+    EditorBounds,
+    EditorBoxStyle,
+    EditorCellGrid,
+    EditorImageLayer,
+    EditorLayer,
+    EditorLayerTransform,
+    EditorPoint,
+    EditorShape,
+    EditorShapeAppearance,
+    EditorShapeChannel,
+    EditorShapeDetail,
+    EditorShapeKind,
+    EditorShapeLayer,
+    EditorShapeStyle,
+    EditorTextLayer,
+    EditorTool,
+    EditorVideoLayer,
+  } from '../lib/types/editor-domain.js';
+  import type { EditorFontMetrics } from '../lib/render.js';
+  import type { GestureOwner } from '../lib/gestureOwnership.js';
+  import type { TextGesture } from '../lib/textHitTest.js';
+  import type { ShapeTransformHandle } from '../lib/shapeTransform.js';
+  import type { CropHandle } from '../lib/crop.js';
+  import type { ProjectLayer } from '../lib/types/project-types.js';
+  import type {
+    CanvasHover,
+    CanvasImageGizmo,
+    CanvasMoveAnchor,
+    CanvasOffsetDrag,
+    CanvasOnionGhost,
+    CanvasOwnershipContext,
+    CanvasPointerGesture,
+    CanvasPointerGestureKind,
+    CanvasProps,
+    CanvasSelectionAction,
+    CanvasSelectionRect,
+    CanvasShapeDrag,
+    CanvasTextEdit,
+    CanvasTextInputState,
+    StartPointerGestureOptions,
+    WindowDragOptions,
+    WindowDragStop,
+  } from '../lib/types/canvas-components.js';
+
+  type StoreValue<T> = T extends Readable<infer Value> ? Value : never;
+  type SelectionMoveState = NonNullable<StoreValue<typeof moveState>>;
+  type SelectionMode = ReturnType<typeof selectionModeForModifiers>;
+  type SelectionTransformHandle = Parameters<typeof transformBoundsFromDrag>[1];
+  type ShapeGlyph = ReturnType<typeof shapeGlyphs>[number];
+  type TextGestureSelection = NonNullable<ReturnType<typeof textGestureSelection>>;
+  type RasterLayer = EditorImageLayer | EditorVideoLayer;
+  type PointerElementEvent<T extends HTMLElement = HTMLElement> = PointerEvent & {
+    currentTarget: EventTarget & T;
+  };
+  type MouseElementEvent<T extends HTMLElement = HTMLElement> = MouseEvent & {
+    currentTarget: EventTarget & T;
+  };
+  type LineAnchor = EditorPoint & {
+    sx: number;
+    sy: number;
+    owner: Readonly<GestureOwner>;
+  };
+  type SubcellPoint = { sx: number; sy: number };
+  type PanGesture = { sx: number; sy: number; px: number; py: number };
+  type SelectionMenuPosition = EditorPoint;
+
+  const CROP_HANDLES: readonly Exclude<CropHandle, 'move'>[] = [
+    'nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w',
+  ];
+  const SELECTION_TRANSFORM_HANDLES = TRANSFORM_HANDLES as readonly Exclude<SelectionTransformHandle, 'body'>[];
 
   // App mounts <Canvas /> without data props and coordinates crop through the
   // window events below. Keep the former bubbled pointer callback explicit.
-  let { onpointerdown } = $props();
+  let { onpointerdown = undefined }: CanvasProps = $props();
 
 
-  function disp(hex) {
-    if (!hex) return hex;
+  function disp(hex: string | null | undefined): string {
+    if (!hex) return '';
     return $colorDepth === '256' ? nearest256(hex).hex : hex;
   }
 
-  function blankShapeAcceptsTool(layer, tool, drag, frame) {
+  function blankShapeAcceptsTool(
+    layer: EditorLayer | null,
+    tool: EditorShapeKind,
+    drag: CanvasShapeDrag,
+    frame: number,
+  ): layer is EditorShapeLayer {
     const pathEnabled = layer?.type === 'shape' && isShapePathTrackEnabled(layer.id);
     const ownerActive = layer?.id != null &&
       !!findActiveTimelineClip(getClipTimelineState(), layer.id, frame);
     return blankShapeLayerAcceptsKind(
       layer,
       pathEnabled,
-      pathEnabled ? shapePathAt(layer.id, frame)?.kind : null,
+      pathEnabled ? shapePathAt(layer.id, frame)?.kind ?? null : null,
       shapeSpec(tool, drag).kind,
       ownerActive,
     );
   }
 
   const ZOOM_STEPS = [8, 11, 14, 18, 24, 32, 44, 60];
-  let zoomIdx = $state(3);
-  function zoomIn() { zoomIdx = Math.min(ZOOM_STEPS.length - 1, zoomIdx + 1); }
-  function zoomOut() { zoomIdx = Math.max(0, zoomIdx - 1); }
-  function onWheel(e) { if (!e.ctrlKey) return; e.preventDefault(); if (e.deltaY < 0) zoomIn(); else zoomOut(); }
-  function fitToViewport() {
+  let zoomIdx = $state<number>(3);
+  function zoomIn(): void { zoomIdx = Math.min(ZOOM_STEPS.length - 1, zoomIdx + 1); }
+  function zoomOut(): void { zoomIdx = Math.max(0, zoomIdx - 1); }
+  function onWheel(event: WheelEvent): void {
+    if (!event.ctrlKey) return;
+    event.preventDefault();
+    if (event.deltaY < 0) zoomIn(); else zoomOut();
+  }
+  function fitToViewport(): void {
     const wrap = canvasWrapEl?.getBoundingClientRect(); if (!wrap) return;
     const pad = 24;
     let best = 0;
     for (let i = 0; i < ZOOM_STEPS.length; i++) {
-      const m = metricsForCellWidth($canvasFont, ZOOM_STEPS[i]);
+      const m = metricsForCellWidth($canvasFont, ZOOM_STEPS[i]!);
       if (W * m.cellW <= wrap.width - pad && H * m.cellH <= wrap.height - pad) best = i;
     }
     zoomIdx = best;
     pan = { x: 0, y: 0 };
   }
-  let lastFitDims = $state('');
+  let lastFitDims = $state<string>('');
 
-  let pan = $state({ x: 0, y: 0 });
-  let spaceHeld = $state(false);
-  let panning = $state(null);
-  function onPanKeyDown(e) {
-    if (e.code !== 'Space' || isTypingTarget(e.target) || get(popupOpen) ||
+  let pan = $state<EditorPoint>({ x: 0, y: 0 });
+  let spaceHeld = $state<boolean>(false);
+  let panning = $state<PanGesture | null>(null);
+  function onPanKeyDown(event: KeyboardEvent): void {
+    if (event.code !== 'Space' || isTypingTarget(event.target) || get(popupOpen) ||
       getKeyboardContext() === 'timeline') return;
-    e.preventDefault();
-    if (e.target instanceof HTMLElement) e.target.blur();
+    event.preventDefault();
+    if (event.target instanceof HTMLElement) event.target.blur();
     spaceHeld = true;
   }
-  function onPanKeyUp(e) {
-    if (e.code !== 'Space' || isTypingTarget(e.target) || get(popupOpen) ||
+  function onPanKeyUp(event: KeyboardEvent): void {
+    if (event.code !== 'Space' || isTypingTarget(event.target) || get(popupOpen) ||
       (getKeyboardContext() === 'timeline' && !spaceHeld)) return;
-    e.preventDefault();
+    event.preventDefault();
     spaceHeld = false;
   }
-  function isTypingTarget(t) { return t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable); }
-  function beginPan(e) {
-    const pointerId = e.pointerId;
-    const state = { sx: e.clientX, sy: e.clientY, px: pan.x, py: pan.y };
+  function isTypingTarget(target: EventTarget | null): boolean {
+    return target instanceof HTMLElement &&
+      (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable);
+  }
+  function beginPan(event: PointerEvent): void {
+    const pointerId = event.pointerId;
+    const state: PanGesture = { sx: event.clientX, sy: event.clientY, px: pan.x, py: pan.y };
     panning = state;
     trackWindowDrag(pointerId, (event) => {
       pan = { x: state.px + event.clientX - state.sx, y: state.py + event.clientY - state.sy };
     }, () => { panning = null; }, { owned: false });
   }
 
-  let metrics = $state({ cellW: 11, cellH: 22, baseline: 17, fontPx: 18, advance: 11 });
-  let fontReady = $state(false);
-  function remeasure() {
-    metrics = metricsForCellWidth($canvasFont, targetW);
+  let metrics = $state<EditorFontMetrics>({ cellW: 11, cellH: 22, baseline: 17, fontPx: 18, advance: 11 });
+  let fontReady = $state<boolean>(false);
+  function remeasure(): void {
+    metrics = metricsForCellWidth($canvasFont, targetW ?? ZOOM_STEPS[0]!);
+    updateCanvasViewportState();
     const root = document.documentElement.style;
     root.setProperty('--cell-w', `${metrics.cellW}px`);
     root.setProperty('--cell-h', `${metrics.cellH}px`);
@@ -291,25 +413,32 @@
     redraw();
   }
 
-  let canvasEl = $state();
-  let hoverCanvasEl = $state();
-  let imageCanvasEl = $state();
-  function drawImages() {
+  let canvasEl = $state<HTMLCanvasElement | null>(null);
+  let hoverCanvasEl = $state<HTMLCanvasElement | null>(null);
+  let imageCanvasEl = $state<HTMLCanvasElement | null>(null);
+  function drawImages(): void {
     if (!imageCanvasEl) return;
-    const w = W * metrics.cellW, h = H * metrics.cellH;
-    sizeCanvasBacking(imageCanvasEl, w, h, canvasDpr);
-    const ctx = imageCanvasEl.getContext('2d');
+    const vp = canvasViewport;
+    const { cssWidth: w, cssHeight: h } = layoutViewportCanvas(
+      imageCanvasEl,
+      vp,
+      { w: metrics.cellW, h: metrics.cellH },
+      canvasDpr,
+    );
+    const ctx = imageCanvasEl.getContext('2d')!;
     ctx.setTransform(canvasDpr, 0, 0, canvasDpr, 0, 0);
     ctx.clearRect(0, 0, w, h);
     for (let i = $layers.length - 1; i >= 0; i--) {
-      const L = $layers[i];
-      if ((L.type !== 'image' && L.type !== 'video') || !L.raster || !effVisible($layers, L)) continue;
-      if (L.type === 'video' && !videoStateAtTick(L.videoClip, $playheadTick, $fps).active) continue;
-      if (L.type === 'video' && $videoRasterStatus.get(L.id)?.state === 'error') continue;
-      const geometry = rasterDisplayGeometry($layers, L, { w: W, h: H });
+      const layer = $layers[i];
+      if (!layer || (layer.type !== 'image' && layer.type !== 'video') ||
+        !layer.raster || !effVisible($layers, layer)) continue;
+      if (layer.type === 'video' && !videoStateAtTick(layer.videoClip, $playheadTick, $fps).active) continue;
+      if (layer.type === 'video' && $videoRasterStatus.get(layer.id)?.state === 'error') continue;
+      const geometry = rasterDisplayGeometry($layers, layer, { w: W, h: H });
       if (!geometry) continue;
-      const cxpx = geometry.x * metrics.cellW;
-      const cypx = geometry.y * metrics.cellH;
+      const center = viewportLocalPoint({ x: geometry.x, y: geometry.y }, vp);
+      const cxpx = center.x * metrics.cellW;
+      const cypx = center.y * metrics.cellH;
       ctx.save();
       ctx.globalAlpha = geometry.opacity;
       ctx.translate(cxpx, cypx);
@@ -318,13 +447,13 @@
       const sy = geometry.scaleY * (metrics.cellH / 2);
       ctx.scale(sx, sy);
       ctx.imageSmoothingEnabled = true;
-      ctx.drawImage(L.raster, -L.raster.width / 2, -L.raster.height / 2);
+      ctx.drawImage(layer.raster, -layer.raster.width / 2, -layer.raster.height / 2);
       ctx.restore();
     }
     ctx.globalAlpha = 1;
   }
-  let blinkOn = $state(true);
-  function redraw() {
+  let blinkOn = $state<boolean>(true);
+  function redraw(): void {
     if (!canvasEl) return;
     drawGrid(canvasWithStableDimensions(canvasEl), visibleGrid, metrics, {
       fontFamily: $canvasFont,
@@ -334,21 +463,25 @@
     });
   }
 
-  let canvasViewportSize = $state({ w: 1, h: 1 });
-  let canvasDpr = $state(1);
+  let canvasViewportSize = $state<{ w: number; h: number }>({ w: 1, h: 1 });
+  let canvasDpr = $state<number>(1);
 
-  function updateCanvasViewportState() {
+  function updateCanvasViewportState(): void {
     const rect = canvasWrapEl?.getBoundingClientRect();
     if (rect) {
       const next = { w: Math.max(1, rect.width), h: Math.max(1, rect.height) };
       if (next.w !== canvasViewportSize.w || next.h !== canvasViewportSize.h) canvasViewportSize = next;
     }
-    const nextDpr = Math.max(0.01, window.devicePixelRatio || 1);
+    const nextDpr = canvasBackingScale(
+      window.devicePixelRatio,
+      W * metrics.cellW,
+      H * metrics.cellH,
+    );
     if (nextDpr !== canvasDpr) canvasDpr = nextDpr;
   }
 
-  let worldCanvasEl = $state();
-  function drawWorld() {
+  let worldCanvasEl = $state<HTMLCanvasElement | null>(null);
+  function drawWorld(): void {
     if (!worldCanvasEl) return;
     const vp = canvasViewport;
     const cells = applyBlinkPhase(normalizeOutputGrid(
@@ -362,20 +495,20 @@
       { w: metrics.cellW, h: metrics.cellH },
       canvasDpr,
     );
-    const ctx = worldCanvasEl.getContext('2d');
+    const ctx = worldCanvasEl.getContext('2d')!;
     ctx.setTransform(canvasDpr, 0, 0, canvasDpr, 0, 0);
     ctx.clearRect(0, 0, pw, ph);
     ctx.font = `${metrics.fontPx}px ${$canvasFont}`;
     ctx.globalAlpha = 0.28;
     for (let y = 0; y < vp.h; y++) for (let x = 0; x < vp.w; x++) {
-      const c = cells[y][x]; if (!c || !c.offCanvas) continue;
+      const c = cells[y]?.[x]; if (!c || !c.offCanvas) continue;
       if (c.bg) { ctx.fillStyle = disp(c.bg); ctx.fillRect(x * metrics.cellW, y * metrics.cellH, metrics.cellW, metrics.cellH); }
       if (c.c) drawGlyph(ctx, c.c, disp(c.fg) || '#fff', x, y, metrics);
     }
     ctx.globalAlpha = 1;
   }
 
-  function drawHover() {
+  function drawHover(): void {
     if (!hoverCanvasEl) return;
     const vp = canvasViewport;
     const { cssWidth: w, cssHeight: h } = layoutViewportCanvas(
@@ -384,13 +517,13 @@
       { w: metrics.cellW, h: metrics.cellH },
       canvasDpr,
     );
-    const ctx = hoverCanvasEl.getContext('2d');
+    const ctx = hoverCanvasEl.getContext('2d')!;
     ctx.setTransform(canvasDpr, 0, 0, canvasDpr, 0, 0);
     ctx.clearRect(0, 0, w, h);
     if (!hover) return;
     const x = hover.x - vp.x, y = hover.y - vp.y;
     if (x < 0 || y < 0 || x >= vp.w || y >= vp.h) return;
-    if (editingEffectMask) {
+    if (editingMask) {
       ctx.fillStyle = $activeTool === 'eraser' ? '#000000' : disp($paintColor);
       ctx.fillRect(x * metrics.cellW, y * metrics.cellH, metrics.cellW, metrics.cellH);
       return;
@@ -406,16 +539,16 @@
   }
 
   const ONION_DEPTH = 2;
-  let onionCanvasEl = $state();
-  function drawOnion() {
+  let onionCanvasEl = $state<HTMLCanvasElement | null>(null);
+  function drawOnion(): void {
     if (!onionCanvasEl) return;
     const w = W * metrics.cellW, h = H * metrics.cellH;
     sizeCanvasBacking(onionCanvasEl, w, h, canvasDpr);
-    const ctx = onionCanvasEl.getContext('2d');
+    const ctx = onionCanvasEl.getContext('2d')!;
     ctx.setTransform(canvasDpr, 0, 0, canvasDpr, 0, 0);
     ctx.clearRect(0, 0, w, h);
     ctx.font = `${metrics.fontPx}px ${$canvasFont}`;
-    const colors = {
+    const colors: Record<CanvasOnionGhost['direction'], string> = {
       previous: readThemeColor('--onion-previous', onionCanvasEl),
       next: readThemeColor('--onion-next', onionCanvasEl),
     };
@@ -431,18 +564,16 @@
       ? new ResizeObserver(updateCanvasViewportState)
       : null;
     if (canvasWrapEl) viewportObserver?.observe(canvasWrapEl);
-    let dprMediaQuery = null;
-    const unwatchDpr = () => {
-      dprMediaQuery?.removeEventListener?.('change', onDprChange);
-      dprMediaQuery?.removeListener?.(onDprChange);
+    let dprMediaQuery: MediaQueryList | null = null;
+    const unwatchDpr = (): void => {
+      dprMediaQuery?.removeEventListener('change', onDprChange);
     };
-    const watchDpr = () => {
+    const watchDpr = (): void => {
       unwatchDpr();
       dprMediaQuery = window.matchMedia(`(resolution: ${window.devicePixelRatio || 1}dppx)`);
-      if (dprMediaQuery.addEventListener) dprMediaQuery.addEventListener('change', onDprChange);
-      else dprMediaQuery.addListener?.(onDprChange);
+      dprMediaQuery.addEventListener('change', onDprChange);
     };
-    const onDprChange = () => {
+    const onDprChange = (): void => {
       updateCanvasViewportState();
       watchDpr();
     };
@@ -456,6 +587,10 @@
     window.addEventListener('keyup', onPanKeyUp);
     window.addEventListener('resize', updateCanvasViewportState);
     window.visualViewport?.addEventListener('resize', updateCanvasViewportState);
+    const onApplyCrop = (): void => { void applyCrop(); };
+    const onCancelCrop = (): void => { cancelPendingCrop(); };
+    window.addEventListener('apply-crop', onApplyCrop);
+    window.addEventListener('cancel-crop', onCancelCrop);
     const stopProjectReplaced = onProjectReplaced(resetCanvasInteractions);
     return () => {
       clearInterval(blinkTimer);
@@ -466,25 +601,35 @@
       window.removeEventListener('keyup', onPanKeyUp);
       window.removeEventListener('resize', updateCanvasViewportState);
       window.visualViewport?.removeEventListener('resize', updateCanvasViewportState);
+      window.removeEventListener('apply-crop', onApplyCrop);
+      window.removeEventListener('cancel-crop', onCancelCrop);
     };
   });
 
-  let canvasWrapEl = $state();
-  let gridEl = $state();
-  let gridOn = $state(true);
+  let canvasWrapEl = $state<HTMLDivElement | null>(null);
+  let gridEl = $state<HTMLDivElement | null>(null);
+  let gridOn = $state<boolean>(true);
 
-  let painting = false;
-  let last = null;
-  let lastSub = null;
-  let lineAnchor = null;
-  let colorSamplePointer = null;
-  let pointerGesture = $state(null);
-  let activeWindowDrag = $state(null);
-  let activeWindowOwner = $state(null);
-  let activeWindowOwnsMoveState = $state(false);
+  let painting: boolean = false;
+  let last: EditorPoint | null = null;
+  let lastSub: SubcellPoint | null = null;
+  let temporaryErase = $state<boolean>(false);
+  let lineAnchor: LineAnchor | null = null;
+  let colorSamplePointer: number | null = null;
+  let pointerGesture = $state<CanvasPointerGesture | null>(null);
+  let activeWindowDrag = $state<WindowDragStop | null>(null);
+  let activeWindowOwner = $state<Readonly<GestureOwner> | null>(null);
+  let activeWindowOwnsMoveState = $state<boolean>(false);
+  let rasterSnapGuides = $state<RasterSnapGuides>({ x: null, y: null });
+
+  function clearRasterSnapGuides(): void {
+    if (rasterSnapGuides.x !== null || rasterSnapGuides.y !== null) {
+      rasterSnapGuides = { x: null, y: null };
+    }
+  }
 
   // Snapshot gesture ownership so context changes cancel a drag before it can mutate a new target.
-  function currentOwnershipContext() {
+  function currentOwnershipContext(): CanvasOwnershipContext {
     return {
       layerId: $activeLayerId,
       frameIndex: $activeFrameIndex,
@@ -495,33 +640,44 @@
   }
 
 
-  function ownGesture(pointerId, overrides = {}) {
+  function ownGesture(
+    pointerId: number | null,
+    overrides: Partial<CanvasOwnershipContext> = {},
+  ): Readonly<GestureOwner> {
     return captureGestureOwner({ ...currentOwnershipContext(), ...overrides }, pointerId);
   }
 
-  function ownerIsCurrent(owner) {
+  function ownerIsCurrent(owner: GestureOwner): boolean {
     return gestureOwnerMatches(owner, currentOwnershipContext());
   }
 
-  function startPointerGesture(kind, event, options = {}) {
-    pointerGesture = {
+  function startPointerGesture(
+    kind: CanvasPointerGestureKind,
+    event: Pick<PointerEvent, 'pointerId'>,
+    options: StartPointerGestureOptions = {},
+  ): CanvasPointerGesture {
+    const gesture: CanvasPointerGesture = {
       kind,
       owner: ownGesture(event?.pointerId, options.owner),
       historyOpen: !!options.historyOpen,
       ownsMoveState: !!options.ownsMoveState,
-      freshPaintOwner: options.freshPaintOwnerId != null,
-      freshPaintOwnerId: options.freshPaintOwnerId ?? null,
+      freshPaintOwner: typeof options.freshPaintOwnerId === 'string',
+      freshPaintOwnerId: typeof options.freshPaintOwnerId === 'string'
+        ? options.freshPaintOwnerId
+        : null,
       contentMutated: false,
     };
-    return pointerGesture;
+    pointerGesture = gesture;
+    return gesture;
   }
 
-  function recordPaintMutation(changed) {
+  function recordPaintMutation<Changed>(changed: Changed): Changed {
     if (changed && pointerGesture) pointerGesture.contentMutated = true;
     return changed;
   }
 
-  function clearPointerGestureState() {
+  function clearPointerGestureState(): void {
+    clearRasterSnapGuides();
     painting = false;
     last = null;
     lastSub = null;
@@ -534,15 +690,16 @@
     offsetDrag = null;
     textGesture = null;
     pointerGesture = null;
+    temporaryErase = false;
   }
 
-  function abortPointerGesture() {
+  function abortPointerGesture(): void {
     if (pointerGesture?.ownsMoveState && get(moveState)) cancelMove();
     else if (pointerGesture?.historyOpen) cancelStroke();
     clearPointerGestureState();
   }
 
-  function pointerGestureAccepts(event) {
+  function pointerGestureAccepts(event: Pick<PointerEvent, 'pointerId'>): boolean {
     if (!pointerGesture) return false;
     if (!gesturePointerMatches(pointerGesture.owner, event?.pointerId)) return false;
     if (!ownerIsCurrent(pointerGesture.owner)) {
@@ -553,7 +710,8 @@
   }
 
 
-  function coordinatesAt(event) {
+  function coordinatesAt(event: Pick<PointerEvent, 'clientX' | 'clientY'>) {
+    if (!gridEl) throw new Error('Canvas stage is not mounted.');
     return canvasCoordinates(
       event,
       gridEl.getBoundingClientRect(),
@@ -562,13 +720,27 @@
     );
   }
 
-  const MUTATING = new Set(['brush', 'eraser', 'subcell', 'fill']);
-  const STROKE_TOOLS = new Set(['brush', 'eraser', 'subcell']);
-  const SHAPE_TOOLS = new Set(['line', 'rect', 'circle', 'polygon']);
-  const CANVAS_BOUND = new Set(['crop', 'select']);
+  const MUTATING = new Set<EditorTool>(['brush', 'eraser', 'subcell', 'fill']);
+  const STROKE_TOOLS = new Set<EditorTool>(['brush', 'eraser', 'subcell']);
+  const SHAPE_TOOLS = new Set<EditorShapeKind>(['line', 'rect', 'circle', 'polygon']);
+  const CANVAS_BOUND = new Set<EditorTool>(['crop']);
+
+  function isShapeTool(tool: EditorTool | string | null): tool is EditorShapeKind {
+    return typeof tool === 'string' && SHAPE_TOOLS.has(tool as EditorShapeKind);
+  }
+
+  function isProjectLayerList(value: unknown): value is ProjectLayer[] {
+    return Array.isArray(value) && value.every((layer: unknown) =>
+      layer !== null && typeof layer === 'object' &&
+      'id' in layer && typeof layer.id === 'string' &&
+      'name' in layer && typeof layer.name === 'string' &&
+      'type' in layer && typeof layer.type === 'string' &&
+      'visible' in layer && typeof layer.visible === 'boolean' &&
+      'cells' in layer && layer.cells !== null && typeof layer.cells === 'object');
+  }
 
 
-  function preparePaintOwner(tool) {
+  function preparePaintOwner(tool: EditorTool): { ready: boolean; createdId: string | null } {
     const state = getClipTimelineState();
     const disposition = paintOwnerDisposition(tool, activeLayer, {
       activePart: $activeLayerPart,
@@ -577,6 +749,9 @@
     });
     if (disposition === 'blocked') return { ready: false, createdId: null };
     if (disposition !== 'create') return { ready: true, createdId: null };
+    if (activeLayer?.type !== 'cell' && activeLayer?.type !== 'background') {
+      return { ready: false, createdId: null };
+    }
     if (beginStroke() !== true) return { ready: false, createdId: null };
     const createdId = createPaintLayer(activeLayer.type);
     if (!createdId) {
@@ -586,23 +761,25 @@
     return { ready: true, createdId };
   }
 
-  let shapeDrag = null;
-  let shapePreview = $state([]);
-  function specialBrushMode() {
+  let shapeDrag: CanvasShapeDrag | null = null;
+  let shapePreview = $state<ShapeGlyph[]>([]);
+  function specialBrushMode(): EditorBoxStyle | null {
     const options = $toolOptions.subcell || {};
     const mode = options.mode || options.resolution || 'half';
-    return BOX_STYLES[mode] ? mode : null;
+    return mode in BOX_STYLES ? mode as EditorBoxStyle : null;
   }
-  function shapeSpec(tool, d) {
-    const rawOpts = $toolOptions[tool] || {};
-    const opts = editingEffectMask ? maskShapeAppearance(rawOpts) : rawOpts;
-    const channel = editingEffectMask ? 'background' : (opts.channel || 'glyph');
-    const styled = !editingEffectMask && channel === 'glyph' &&
+  function shapeSpec(tool: EditorShapeKind, d: CanvasShapeDrag): EditorShape {
+    const selectedLayer = get(layers).find((layer) => layer.id === get(activeLayerId)) || null;
+    const drawingMask = isEditingEffectMask(selectedLayer) || isEditingContentMask(selectedLayer);
+    const rawOpts: EditorShapeAppearance = $toolOptions[tool];
+    const opts = drawingMask ? maskShapeAppearance(rawOpts) : rawOpts;
+    const channel: EditorShapeChannel = drawingMask ? 'background' : (opts.channel || 'glyph');
+    const styled = !drawingMask && channel === 'glyph' &&
       (tool === 'rect' || tool === 'circle' || tool === 'line' || tool === 'polygon');
-    const style = styled && (opts.style === 'special' || opts.style === 'slope')
+    const style: EditorShapeStyle = styled && (opts.style === 'special' || opts.style === 'slope')
       ? opts.style
       : (opts.style === 'filled' ? 'filled' : 'outline');
-    const detail = editingEffectMask || channel === 'background' || style === 'special' || style === 'slope'
+    const detail: EditorShapeDetail = drawingMask || channel !== 'glyph' || style === 'special' || style === 'slope'
       ? 'cell'
       : (opts.detail || 'cell');
     const shape = {
@@ -613,9 +790,10 @@
       strokeAlign: opts.strokeAlign || 'center',
       channel, char: $activeChar,
       fg: $paintColor,
-      wide: !editingEffectMask && channel === 'glyph' && style !== 'special' &&
+      mix: channel === 'color-clip' ? 1 : undefined,
+      wide: !drawingMask && channel === 'glyph' && style !== 'special' &&
         style !== 'slope' && detail === 'cell' && isWide($activeChar),
-    };
+    } as EditorShape;
     if (tool === 'polygon') {
       shape.vertices = regularPolygonVertices(d.x0, d.y0, d.x1, d.y1, shape.sides);
       shape.anchor = { x: (d.x0 + d.x1) / 2, y: (d.y0 + d.y1) / 2 };
@@ -624,18 +802,22 @@
     return constrainShape(shape);
   }
 
-  let selDrag = $state(null), lassoPts = null, selectionGestureMode = null, moveAnchor = null, offsetDrag = null;
-  let selectionMenu = $state(null);
-  let selectionMenuEl = $state();
+  let selDrag = $state<CanvasSelectionRect | null>(null);
+  let lassoPts: EditorPoint[] | null = null;
+  let selectionGestureMode: SelectionMode | null = null;
+  let moveAnchor: CanvasMoveAnchor | null = null;
+  let offsetDrag: CanvasOffsetDrag | null = null;
+  let selectionMenu = $state<SelectionMenuPosition | null>(null);
+  let selectionMenuEl = $state<HTMLDivElement | null>(null);
 
-  async function onSelectionContext(e) {
+  async function onSelectionContext(event: MouseElementEvent<HTMLDivElement>): Promise<void> {
     if ($activeTool !== 'select' || !$selection.size) return;
-    const { x, y } = coordinatesAt(e).cell;
+    const { x, y } = coordinatesAt(event).cell;
     if (!$selection.has(selectionKey(x, y))) return;
-    e.preventDefault();
-    e.stopPropagation();
+    event.preventDefault();
+    event.stopPropagation();
     setKeyboardContext('canvas');
-    selectionMenu = { x: e.clientX, y: e.clientY };
+    selectionMenu = { x: event.clientX, y: event.clientY };
     await tick();
     if (!selectionMenuEl || !selectionMenu) return;
     const rect = selectionMenuEl.getBoundingClientRect();
@@ -646,24 +828,27 @@
       y: Math.max(margin, Math.min(selectionMenu.y, window.innerHeight - rect.height - margin)),
     };
   }
-  function selectionAction(action) {
+  function selectionAction(action: CanvasSelectionAction): void {
     selectionMenu = null;
-    if (action === 'transform') beginTransformSelection();
-    else if (action === 'move') beginMove();
+    if (action === 'move') beginMove();
     else if (action === 'copy') selectionToNewLayer(false);
     else if (action === 'cut') selectionToNewLayer(true);
     else if (action === 'deselect') selection.set(new Set());
   }
-  function onSelectionMenuPointerDown(event) {
+  function onSelectionMenuPointerDown(event: PointerEvent): void {
     event.stopPropagation();
     onpointerdown?.(event);
   }
-  function onActionPointerDown(event, action) {
+  function onActionPointerDown(
+    event: PointerEvent,
+    action: (event?: PointerEvent) => unknown,
+  ): unknown {
+    if (event.button !== 0) return;
     event.stopPropagation();
     event.preventDefault();
     return action(event);
   }
-  function onCanvasWindowKey(event) {
+  function onCanvasWindowKey(event: KeyboardEvent): void {
     const deselect = planSelectionDeselect(event, {
       context: getKeyboardContext(),
       typing: isTypingTarget(event.target),
@@ -686,7 +871,7 @@
     if (action === 'cancel-pointer') {
       event.preventDefault();
       event.stopImmediatePropagation();
-      const pointerId = pointerGesture.owner?.pointerId;
+      const pointerId = pointerGesture?.owner.pointerId ?? null;
       if (pointerId != null && gridEl?.hasPointerCapture?.(pointerId)) {
         gridEl.releasePointerCapture(pointerId);
       }
@@ -698,11 +883,15 @@
     selectionMenu = null;
   }
 
-  let textEdit = $state(null), textValue = $state(''), textInputEl = $state(), textGesture = $state(null);
+  let textEdit = $state<CanvasTextEdit | null>(null);
+  let textValue = $state<string>('');
+  let textInputEl = $state<HTMLTextAreaElement | null>(null);
+  let textGesture = $state<TextGesture | null>(null);
+  let textEditSession: number = 0;
   // Controlled textarea rendering replaces the browser's native undo state.
   const textInputHistory = createControlledTextHistory();
 
-  function resetCanvasInteractions() {
+  function resetCanvasInteractions(): void {
     releaseKeyboardContext('canvas');
     activeWindowDrag?.(true);
     activeWindowDrag = null;
@@ -719,45 +908,56 @@
     colorSamplePointer = null;
   }
 
-  function rasterColorAt(x, y, fx = 0.5, fy = 0.5) {
+  function rasterColorAt(x: number, y: number, fx = 0.5, fy = 0.5): string | null {
     if (!imageCanvasEl || !inBounds(x, y)) return null;
     try {
-      const scaleX = imageCanvasEl.width / (W * metrics.cellW);
-      const scaleY = imageCanvasEl.height / (H * metrics.cellH);
+      const vp = canvasViewport;
+      const sample = viewportLocalPoint({ x: x + fx, y: y + fy }, vp);
+      const scaleX = imageCanvasEl.width / (vp.w * metrics.cellW);
+      const scaleY = imageCanvasEl.height / (vp.h * metrics.cellH);
       const px = Math.max(0, Math.min(imageCanvasEl.width - 1,
-        Math.floor((x + fx) * metrics.cellW * scaleX)));
+        Math.floor(sample.x * metrics.cellW * scaleX)));
       const py = Math.max(0, Math.min(imageCanvasEl.height - 1,
-        Math.floor((y + fy) * metrics.cellH * scaleY)));
-      const [r, g, b, a] = imageCanvasEl.getContext('2d').getImageData(px, py, 1, 1).data;
+        Math.floor(sample.y * metrics.cellH * scaleY)));
+      const [r, g, b, a] = imageCanvasEl.getContext('2d')!.getImageData(px, py, 1, 1).data;
       if (!a) return null;
-      return `#${[r, g, b].map((value) => value.toString(16).padStart(2, '0')).join('')}`;
+      return `#${[r!, g!, b!].map((value) => value.toString(16).padStart(2, '0')).join('')}`;
     } catch {
       return null;
     }
   }
 
-  function visibleSampleCell(x, y, fx = 0.5, fy = 0.5) {
+  function visibleSampleCell(x: number, y: number, fx = 0.5, fy = 0.5) {
     const terminal = visibleGrid?.[y]?.[x] || null;
     return displayedSampleCell(terminal, rasterColorAt(x, y, fx, fy));
   }
 
-  function colorForSessionSample(x, y, fx = 0.5, fy = 0.5) {
-    if (editingEffectMask) {
-      const strength = getCell(x, y)?.mask ?? activeLayer?.mask?.defaultStrength;
+  function colorForSessionSample(x: number, y: number, fx = 0.5, fy = 0.5): string | null {
+    if (editingMask) {
+      if (isEditingContentMask(activeLayer)) return getCell(x, y)?.bg || null;
+      const strength = getCell(x, y)?.mask ??
+        (activeLayer?.type === 'effect' ? activeLayer.mask?.defaultStrength : undefined);
       if (strength == null) return null;
       const byte = Math.round(Math.max(0, Math.min(1, strength)) * 255)
         .toString(16).padStart(2, '0');
       return `#${byte}${byte}${byte}`;
     }
     const target = $colorEditSession.target;
-    const targetShape = target?.kind === 'shape' ? getLayer(target.layerId) : null;
+    const targetLayer = target?.kind === 'shape' ? getLayer(target.layerId) : null;
+    const targetShape = targetLayer?.type === 'shape' ? targetLayer : null;
     const preferBackground = targetShape
-      ? targetShape.shape?.channel === 'background'
+      ? targetShape.shape?.channel !== 'glyph'
       : target?.kind === 'toolbar' && activeBackground;
     return visibleColorFromCell(visibleSampleCell(x, y, fx, fy), preferBackground);
   }
 
-  function beginSessionSample(event, x, y, fx, fy) {
+  function beginSessionSample(
+    event: PointerElementEvent<HTMLDivElement>,
+    x: number,
+    y: number,
+    fx: number,
+    fy: number,
+  ): boolean {
     if ($colorEditSession.phase !== 'sampling' || event.button !== 0) return false;
     event.preventDefault();
     event.stopPropagation();
@@ -768,44 +968,53 @@
     return true;
   }
 
-  function onPointerDown(e) {
-    if (isTypingTarget(e.target)) return;
-    if (canvasPointerStartsPan(spaceHeld, e.button)) { e.preventDefault(); beginPan(e); return; }
-    const point = coordinatesAt(e);
+  function onPointerDown(event: PointerElementEvent<HTMLDivElement>): void {
+    if (isTypingTarget(event.target)) return;
+    if (canvasPointerStartsPan(spaceHeld, event.button)) { event.preventDefault(); beginPan(event); return; }
+    const point = coordinatesAt(event);
     const { x, y } = point.cell;
     const { x: fx, y: fy } = point.withinCell;
     const { x: sx, y: sy } = point.subcell;
-    if (beginSessionSample(e, x, y, fx, fy)) return;
-    if (e.button !== 0) return;
+    if (beginSessionSample(event, x, y, fx, fy)) return;
+    const rightErase = event.button === 2 &&
+      ($activeTool === 'brush' || $activeTool === 'subcell') && !wrongLayer;
+    if (event.button !== 0 && !rightErase) return;
     if ($playing) return;
-    e.preventDefault();
-    const sampling = e.altKey && (isBrush || $activeTool === 'fill' || SHAPE_TOOLS.has($activeTool));
+    event.preventDefault();
+    temporaryErase = rightErase;
+    const sampling = $altEyedrop && (isBrush || $activeTool === 'fill' || isShapeTool($activeTool));
     if (wrongLayer && !sampling) return;
     if (CANVAS_BOUND.has($activeTool) && !inBounds(x, y)) return;
 
     if ($moveState) {
       if ($moveState.mode === 'transform') return;
-      startPointerGesture('selection-move', e, {
+      startPointerGesture('selection-move', event, {
         historyOpen: true,
         ownsMoveState: true,
         owner: {
           layerId: $moveState.layerId,
-          layerPart: $moveState.target === 'mask' ? 'mask' : 'layer',
+          layerPart: $moveState.target === 'mask' ? 'mask' : $moveState.target === 'content-mask' ? 'content-mask' : 'layer',
         },
       });
       moveAnchor = { x, y, dx0: $moveState.dx, dy0: $moveState.dy };
-      painting = true; e.currentTarget.setPointerCapture?.(e.pointerId); return;
+      painting = true; event.currentTarget.setPointerCapture?.(event.pointerId); return;
     }
 
     if (sampling) {
-      if (editingEffectMask) {
-        const strength = getCell(x, y)?.mask ?? activeLayer.mask?.defaultStrength ?? 1;
+      if (editingMask) {
+        if (isEditingContentMask(activeLayer)) {
+          const color = getCell(x, y)?.bg;
+          if (color) paintColor.set(color);
+          return;
+        }
+        const strength = getCell(x, y)?.mask ??
+          (activeLayer?.type === 'effect' ? activeLayer.mask?.defaultStrength : undefined) ?? 1;
         const byte = Math.round(strength * 255).toString(16).padStart(2, '0');
         paintColor.set(`#${byte}${byte}${byte}`);
       } else {
         const cell = visibleSampleCell(x, y, fx, fy);
         const backgroundTarget = activeBackground ||
-          (SHAPE_TOOLS.has($activeTool) && $toolOptions[$activeTool]?.channel === 'background');
+          (isShapeTool($activeTool) && $toolOptions[$activeTool].channel !== 'glyph');
         const color = visibleColorFromCell(cell, backgroundTarget);
         if (color) paintColor.set(color);
         if (!backgroundTarget && cell?.c) activeChar.set(cell.c);
@@ -817,49 +1026,55 @@
         if (!$moveState) beginMove();
         const state = get(moveState);
         if (!state) return;
-        startPointerGesture('selection-move', e, {
+        startPointerGesture('selection-move', event, {
           historyOpen: true,
           ownsMoveState: true,
           owner: {
             layerId: state.layerId,
-            layerPart: state.target === 'mask' ? 'mask' : 'layer',
+            layerPart: state.target === 'mask' ? 'mask' : state.target === 'content-mask' ? 'content-mask' : 'layer',
           },
         });
         moveAnchor = { x, y, dx0: state.dx, dy0: state.dy };
         painting = true;
-        e.currentTarget.setPointerCapture?.(e.pointerId);
+        event.currentTarget.setPointerCapture?.(event.pointerId);
         return;
       }
       if (!activeLayer) return;
       const sourceLayer = getLayer($activeLayerId);
-      const isMask = editingEffectMask;
-      const origin = isMask ? sourceLayer?.mask?.offset : sourceLayer?.offset;
-      startPointerGesture('layer-move', e, { historyOpen: true });
+      const isMask = editingMask;
+      const origin = isMask && sourceLayer?.type === 'effect' ? sourceLayer.mask?.offset : sourceLayer?.offset;
+      const rasterDrag = isMask || $activeLayerId == null ? null : captureRasterBodyDrag($activeLayerId);
+      startPointerGesture('layer-move', event, { historyOpen: true });
       offsetDrag = { x, y, startX: x, startY: y, o0: { ...(origin || { x: 0, y: 0 }) },
         animatePosition: isMask ? isMaskPositionTrackEnabled($activeLayerId) : anyPosKeys($activeLayerId),
         isMask,
-        rasterDrag: isMask ? null : captureRasterBodyDrag($activeLayerId),
-        shapeDrag: isMask ? null : captureShapeBodyDrag($activeLayerId, $activeFrameIndex),
+        rasterDrag,
+        shapeDrag: isMask || $activeLayerId == null ? null : captureShapeBodyDrag($activeLayerId, $activeFrameIndex),
         isCell: activeLayerType === 'cell' || activeLayerType === 'background', type: activeLayerType,
         dx: 0, dy: 0, lastDx: 0, lastDy: 0,
         box0: sourceLayer?.box ? { ...sourceLayer.box } : null };
+      if (rasterDrag) clearRasterSnapGuides();
       beginStroke();
-      painting = true; e.currentTarget.setPointerCapture?.(e.pointerId); return;
+      painting = true; event.currentTarget.setPointerCapture?.(event.pointerId); return;
     }
     if ($activeTool === 'text') {
       const onLayer = topTextLayerAt(x, y);
       finishTextEdit();
-      startPointerGesture('text', e);
+      startPointerGesture('text', event);
       textGesture = beginTextGesture(x, y, onLayer?.id, {
         x: fx,
         y: fy,
-        onGlyph: textLayerHasGlyph(onLayer, x, y, { offsetOf: (layer) => effOffset($layers, layer) }),
+        onGlyph: textLayerHasGlyph(onLayer, x, y, {
+          boxOf: (layer) => layerBox($layers, layer) || layer.box,
+          isVisible: (layer) => effVisible($layers, layer),
+          offsetOf: (layer) => effOffset($layers, layer),
+        }),
       });
       painting = true;
-      e.currentTarget.setPointerCapture?.(e.pointerId);
+      event.currentTarget.setPointerCapture?.(event.pointerId);
       return;
     }
-    if (SHAPE_TOOLS.has($activeTool)) {
+    if (isShapeTool($activeTool)) {
       const initialShapeDrag = { x0: x, y0: y, x1: x, y1: y };
       const fillsBlankShapeCel = blankShapeAcceptsTool(
         activeLayer,
@@ -867,117 +1082,149 @@
         initialShapeDrag,
         $activeFrameIndex,
       );
-      startPointerGesture('shape-create', e, {
-        historyOpen: editingEffectMask || fillsBlankShapeCel,
+      startPointerGesture('shape-create', event, {
+        historyOpen: editingMask || fillsBlankShapeCel,
       });
       shapeDrag = initialShapeDrag; shapePreview = [];
-      if (editingEffectMask || fillsBlankShapeCel) beginStroke();
-      painting = true; e.currentTarget.setPointerCapture?.(e.pointerId); return;
+      if (editingMask || fillsBlankShapeCel) beginStroke();
+      painting = true; event.currentTarget.setPointerCapture?.(event.pointerId); return;
     }
     if ($activeTool === 'crop') return;
     if ($activeTool === 'select') {
-      startPointerGesture('select', e);
-      selectionGestureMode = selectionModeForModifiers(e);
-      if ($toolOptions.select.shape === 'lasso') lassoPts = [{ x, y }];
+      if ($selection.size && $selection.has(selectionKey(x, y))) return;
+      startPointerGesture('select', event);
+      selectionGestureMode = selectionModeForModifiers(event);
+      const selectionShape: string = $toolOptions.select.shape;
+      if (selectionShape === 'lasso') lassoPts = [{ x, y }];
       else selDrag = { x0: x, y0: y, x1: x, y1: y };
-      painting = true; e.currentTarget.setPointerCapture?.(e.pointerId); return;
+      painting = true; event.currentTarget.setPointerCapture?.(event.pointerId); return;
     }
     const paintOwner = preparePaintOwner($activeTool);
     if (!paintOwner.ready) return;
-    startPointerGesture('paint', e, {
+    startPointerGesture('paint', event, {
       historyOpen: MUTATING.has($activeTool),
       freshPaintOwnerId: paintOwner.createdId,
     });
     painting = true; last = { x, y }; lastSub = { sx, sy };
     if (MUTATING.has($activeTool) && !paintOwner.createdId) beginStroke();
-    const straight = e.shiftKey && STROKE_TOOLS.has($activeTool) &&
-      gestureOwnerMatches(lineAnchor?.owner, currentOwnershipContext());
-    const special = $activeTool === 'subcell' ? specialBrushMode() : null;
-    if (straight && special) {
+    const straightAnchor = event.shiftKey && STROKE_TOOLS.has($activeTool) &&
+      gestureOwnerMatches(lineAnchor?.owner, currentOwnershipContext())
+      ? lineAnchor
+      : null;
+    const special = !temporaryErase && $activeTool === 'subcell' ? specialBrushMode() : null;
+    if (straightAnchor && special) {
       recordPaintMutation(paintSpecialBrushPath(
-        [{ x: lineAnchor.x, y: lineAnchor.y }, { x, y }],
+        [{ x: straightAnchor.x, y: straightAnchor.y }, { x, y }],
         special,
       ));
-    } else if (straight && $activeTool === 'subcell') {
-      for (const q of linePoints(lineAnchor.sx, lineAnchor.sy, sx, sy)) {
+    } else if (straightAnchor && $activeTool === 'subcell') {
+      for (const q of linePoints(straightAnchor.sx, straightAnchor.sy, sx, sy)) {
         const cx = Math.floor(q.x / 2), cy = Math.floor(q.y / 2);
         const qfx = (((q.x % 2) + 2) % 2 === 0) ? 0.25 : 0.75;
         const qfy = (((q.y % 2) + 2) % 2 === 0) ? 0.25 : 0.75;
-        applyToolToSelection(cx, cy, e, 'drag', qfx, qfy);
+        applyToolToSelection(cx, cy, event, 'move', qfx, qfy);
       }
-    } else if (straight) {
+    } else if (straightAnchor) {
       const wide = $activeTool === 'brush' && isWide(previewChar(fx, fy));
-      const pts = linePoints(lineAnchor.x, lineAnchor.y, x, y);
+      const pts = linePoints(straightAnchor.x, straightAnchor.y, x, y);
       for (let i = 0; i < pts.length; i++) {
         if (wide && i % 2) continue;
-        applyToolToSelection(pts[i].x, pts[i].y, e, 'drag', fx, fy);
+        const point = pts[i];
+        if (point) applyToolToSelection(point.x, point.y, event, 'move', fx, fy);
       }
     } else if (special) {
       // Semantic line brushes need at least two distinct cells. A click/hold with no
       // movement is an accidental no-op, unlike Half and Quarter subcell painting.
     } else {
-      applyToolToSelection(x, y, e, 'down', fx, fy);
+      applyToolToSelection(x, y, event, 'down', fx, fy);
     }
-    e.currentTarget.setPointerCapture?.(e.pointerId);
+    event.currentTarget.setPointerCapture?.(event.pointerId);
   }
 
-  function applyToolToSelection(x, y, event, kind, fx, fy) {
+  function applyToolToSelection(
+    x: number,
+    y: number,
+    event: PointerEvent,
+    kind: 'down' | 'move',
+    fx: number,
+    fy: number,
+  ): false | void | true | number {
     if (isSelected(x, y)) {
       const sampledCell = $activeTool === 'eyedropper'
         ? visibleSampleCell(x, y, fx, fy)
         : undefined;
-      return recordPaintMutation(applyTool(x, y, event, kind, fx, fy, sampledCell));
+      return recordPaintMutation(applyTool(
+        x, y, event, kind, fx, fy, sampledCell, temporaryErase ? 'eraser' : null,
+      ));
     }
     return false;
   }
 
-  function onPointerMove(e) {
-    const point = coordinatesAt(e);
+  function onPointerMove(event: PointerElementEvent<HTMLDivElement>): void {
+    const point = coordinatesAt(event);
     const { x, y } = point.cell;
     const { x: fx, y: fy } = point.withinCell;
     const { x: sx, y: sy } = point.subcell;
-    if (colorSamplePointer === e.pointerId && $colorEditSession.phase === 'sampling') {
-      e.preventDefault();
-      e.stopPropagation();
+    if (colorSamplePointer === event.pointerId && $colorEditSession.phase === 'sampling') {
+      event.preventDefault();
+      event.stopPropagation();
       hover = null;
       const color = colorForSessionSample(x, y, fx, fy);
       if (color) colorEditSession.sample(color);
       return;
     }
-    if (isBrush && !wrongLayer && !e.altKey) {
+    if (isBrush && !wrongLayer && !event.altKey) {
       hoverCellX = x; hoverCellY = y;
       hover = { x, y, char: previewChar(fx, fy) };
     } else hover = null;
 
     if (!painting) return;
-    if (!pointerGestureAccepts(e)) return;
-    const owner = pointerGesture.owner;
+    if (!pointerGestureAccepts(event)) return;
+    const gesture = pointerGesture;
+    if (!gesture) return;
+    const owner = gesture.owner;
+    const ownerLayerId = owner.layerId;
     const gestureTool = owner.tool;
     if (offsetDrag) {
+      if (ownerLayerId == null) {
+        abortPointerGesture();
+        return;
+      }
       const dx = x - offsetDrag.startX, dy = y - offsetDrag.startY;
-      if (dx === offsetDrag.dx && dy === offsetDrag.dy) return;
+      if (!offsetDrag.rasterDrag && dx === offsetDrag.dx && dy === offsetDrag.dy) return;
       offsetDrag.dx = dx; offsetDrag.dy = dy;
       const stepX = dx - offsetDrag.lastDx, stepY = dy - offsetDrag.lastDy;
       if (offsetDrag.isMask) {
         const next = { x: offsetDrag.o0.x + dx, y: offsetDrag.o0.y + dy };
         if (offsetDrag.animatePosition) {
-          setMaskPositionById(owner.frameIndex, owner.layerId, next);
+          setMaskPositionById(owner.frameIndex, ownerLayerId, next);
         } else {
-          setEffectMaskOffsetDirect(owner.layerId, next);
+          setEffectMaskOffsetDirect(ownerLayerId, next);
         }
       } else if (offsetDrag.rasterDrag) {
-        applyRasterBodyDrag(offsetDrag.rasterDrag, owner.frameIndex, dx, dy);
+        const delta = rasterBodyDelta(
+          offsetDrag.rasterDrag,
+          dx,
+          dy,
+          event.ctrlKey || event.metaKey ? null : { w: W, h: H },
+        );
+        if (!delta) return;
+        rasterSnapGuides = delta.guides;
+        if (delta.dx === offsetDrag.lastDx && delta.dy === offsetDrag.lastDy) return;
+        applyRasterBodyDrag(offsetDrag.rasterDrag, owner.frameIndex, delta.dx, delta.dy);
+        offsetDrag.lastDx = delta.dx;
+        offsetDrag.lastDy = delta.dy;
       } else if (offsetDrag.animatePosition) {
-        setLayerOffsetById(owner.frameIndex, owner.layerId, { x: offsetDrag.o0.x + dx, y: offsetDrag.o0.y + dy });
+        setLayerOffsetById(owner.frameIndex, ownerLayerId, { x: offsetDrag.o0.x + dx, y: offsetDrag.o0.y + dy });
       } else if (offsetDrag.isCell) {
-        if (stepX || stepY) { translateLayerCells(owner.layerId, stepX, stepY); offsetDrag.lastDx = dx; offsetDrag.lastDy = dy; }
+        if (stepX || stepY) { translateLayerCells(ownerLayerId, stepX, stepY); offsetDrag.lastDx = dx; offsetDrag.lastDy = dy; }
       } else if (offsetDrag.shapeDrag) {
         applyShapeBodyDrag(offsetDrag.shapeDrag, owner.frameIndex, dx, dy);
       } else if (offsetDrag.type === 'text' && offsetDrag.box0) {
         const b = offsetDrag.box0;
-        updateTextLayer(owner.layerId, { box: { ...b, x: b.x + dx, y: b.y + dy } }, renderTextToCells);
+        updateTextLayer(ownerLayerId, { box: { ...b, x: b.x + dx, y: b.y + dy } }, renderTextToCells);
       } else {
-        setLayerOffsetDirect(owner.layerId, { x: offsetDrag.o0.x + dx, y: offsetDrag.o0.y + dy });
+        setLayerOffsetDirect(ownerLayerId, { x: offsetDrag.o0.x + dx, y: offsetDrag.o0.y + dy });
       }
       return;
     }
@@ -986,10 +1233,10 @@
       textGesture = moveTextGesture(textGesture, x, y, { x: fx, y: fy });
       return;
     }
-    if (SHAPE_TOOLS.has(gestureTool) && shapeDrag) {
+    if (isShapeTool(gestureTool) && shapeDrag) {
       shapeDrag = { ...shapeDrag, x1: x, y1: y };
       const preview = shapeGlyphs(shapeSpec(gestureTool, shapeDrag));
-      shapePreview = owner.layerPart === 'mask'
+      shapePreview = owner.layerPart !== 'layer'
         ? preview.filter((point) => isSelected(point.x, point.y))
         : preview;
       return;
@@ -999,7 +1246,7 @@
       if (selDrag) { selDrag = { ...selDrag, x1: x, y1: y }; return; }
     }
     if (gestureTool === 'subcell') {
-      const special = specialBrushMode();
+      const special = temporaryErase ? null : specialBrushMode();
       if (special) {
         if (last && x === last.x && y === last.y) return;
         recordPaintMutation(paintSpecialBrushPath([last || { x, y }, { x, y }], special));
@@ -1016,7 +1263,7 @@
         // Positive modulo preserves quadrant parity outside the canvas.
         const qfx = (((q.x % 2) + 2) % 2 === 0) ? 0.25 : 0.75;
         const qfy = (((q.y % 2) + 2) % 2 === 0) ? 0.25 : 0.75;
-        applyToolToSelection(cx, cy, e, 'drag', qfx, qfy);
+        applyToolToSelection(cx, cy, event, 'move', qfx, qfy);
       }
       lastSub = { sx, sy }; last = { x, y };
       return;
@@ -1031,31 +1278,34 @@
       for (const p of linePoints(last.x, last.y, x, y)) {
         if (p.x === last.x && p.y === last.y) continue;
         if (wide && (p.x - last.x) % 2 !== 0) continue;
-        applyToolToSelection(p.x, p.y, e, 'drag', fx, fy);
+        applyToolToSelection(p.x, p.y, event, 'move', fx, fy);
       }
       last = { x, y };
       return;
     }
     last = { x, y };
-    applyToolToSelection(x, y, e, 'drag', fx, fy);
+    applyToolToSelection(x, y, event, 'move', fx, fy);
   }
 
-  function onPointerUp(e) {
+  function onPointerUp(event: PointerElementEvent<HTMLDivElement>): void {
     if (colorSamplePointer !== null &&
-      (e?.pointerId == null || colorSamplePointer === e.pointerId)) {
-      e?.preventDefault?.();
-      e?.stopPropagation?.();
+      colorSamplePointer === event.pointerId) {
+      event.preventDefault();
+      event.stopPropagation();
       colorSamplePointer = null;
       colorEditSession.finishSampling();
       return;
     }
     if (!painting && !offsetDrag && !moveAnchor && !shapeDrag && !selDrag && !lassoPts &&
       !textGesture) return;
-    if (pointerGesture && !pointerGestureAccepts(e)) return;
+    if (pointerGesture && !pointerGestureAccepts(event)) return;
     const owner = pointerGesture?.owner;
     const gestureTool = owner?.tool ?? $activeTool;
     if (offsetDrag) {
-      if (offsetDrag.dx || offsetDrag.dy) endStroke();
+      const changed = offsetDrag.rasterDrag
+        ? offsetDrag.lastDx !== 0 || offsetDrag.lastDy !== 0
+        : offsetDrag.dx !== 0 || offsetDrag.dy !== 0;
+      if (changed) endStroke();
       else cancelStroke();
       clearPointerGestureState(); return;
     }
@@ -1066,16 +1316,16 @@
       if (result?.action === 'edit') {
         const layer = getLayer(result.layerId);
         const box = layer ? layerBox($layers, layer) : null;
-        if (layer && box) editExistingText(layer, textGestureSelection(layer, box, gesture));
+        if (layer?.type === 'text' && box) editExistingText(layer, textGestureSelection(layer, box, gesture));
       } else if (result?.action === 'create') {
         startTextEdit(result.box);
       }
       return;
     }
     if ($moveState && moveAnchor) { clearPointerGestureState(); return; }
-    if (SHAPE_TOOLS.has(gestureTool) && shapeDrag) {
-      if (owner?.layerPart === 'mask') {
-        if (hasShapeExtent(shapeDrag) && shapePreview.length) {
+    if (isShapeTool(gestureTool) && shapeDrag) {
+      if (owner?.layerPart !== 'layer') {
+        if (shapeDragHasExtent(shapeDrag) && shapePreview.length) {
           setCells(shapePreview.map(({ x, y }) => ({ x, y, cell: { fg: $paintColor } })));
           endStroke();
         } else {
@@ -1083,12 +1333,12 @@
         }
       } else {
         const spec = shapeSpec(gestureTool, shapeDrag);
-        const blankShapeLayer = getLayer(owner?.layerId);
+        const blankShapeLayer = getLayer(owner?.layerId ?? null);
         if (hasShapeExtent(spec) && blankShapeAcceptsTool(
           blankShapeLayer,
           gestureTool,
           shapeDrag,
-          owner?.frameIndex,
+          owner?.frameIndex ?? $activeFrameIndex,
         )) {
           updateShapeLayer(blankShapeLayer.id, spec, renderShapeToCells);
           endStroke();
@@ -1102,14 +1352,20 @@
     }
     if (gestureTool === 'select') {
       if (lassoPts) { commitLasso(lassoPts); clearPointerGestureState(); return; }
-      if (selDrag) { commitRect(normSel(selDrag)); clearPointerGestureState(); return; }
+      if (selDrag) {
+        if (selDrag.x0 !== selDrag.x1 || selDrag.y0 !== selDrag.y1) commitRect(normSel(selDrag));
+        clearPointerGestureState(); return;
+      }
     }
-    if (STROKE_TOOLS.has(gestureTool) && last &&
+    const strokeTool = gestureTool === 'brush' || gestureTool === 'eraser' || gestureTool === 'subcell'
+      ? gestureTool
+      : null;
+    if (!temporaryErase && strokeTool && last &&
       (!pointerGesture?.freshPaintOwner || pointerGesture.contentMutated)) {
       lineAnchor = {
         x: last.x, y: last.y,
         sx: lastSub?.sx ?? last.x * 2, sy: lastSub?.sy ?? last.y * 2,
-        owner: owner ?? ownGesture(null, { tool: gestureTool }),
+        owner: owner ?? ownGesture(null, { tool: strokeTool }),
       };
     }
     if (pointerGesture?.freshPaintOwner && !pointerGesture.contentMutated) {
@@ -1125,20 +1381,20 @@
     clearPointerGestureState();
   }
 
-  function cancelPointerInteraction(e) {
+  function cancelPointerInteraction(event: PointerElementEvent<HTMLDivElement>): void {
     if (colorSamplePointer !== null &&
-      (e?.pointerId == null || colorSamplePointer === e.pointerId)) {
-      e?.preventDefault?.();
-      e?.stopPropagation?.();
+      colorSamplePointer === event.pointerId) {
+      event.preventDefault();
+      event.stopPropagation();
       colorSamplePointer = null;
       colorEditSession.cancel();
       return;
     }
-    if (pointerGesture && !gesturePointerMatches(pointerGesture.owner, e?.pointerId)) return;
+    if (pointerGesture && !gesturePointerMatches(pointerGesture.owner, event.pointerId)) return;
     abortPointerGesture();
   }
 
-  function onWindowBlur() {
+  function onWindowBlur(): void {
     spaceHeld = false;
     panning = null;
     if (colorSamplePointer !== null) {
@@ -1149,75 +1405,89 @@
     abortPointerGesture();
   }
 
-  function normSel(d) { return { x0: Math.min(d.x0, d.x1), y0: Math.min(d.y0, d.y1), x1: Math.max(d.x0, d.x1), y1: Math.max(d.y0, d.y1) }; }
-  function commitRect(s) {
-    const cells = [];
-    for (let y = s.y0; y <= s.y1; y++) for (let x = s.x0; x <= s.x1; x++) if (inBounds(x, y)) cells.push({ x, y });
-    applyRegion(cells, selectionGestureMode);
+  function normSel(drag: CanvasSelectionRect): CanvasSelectionRect {
+    return { x0: Math.min(drag.x0, drag.x1), y0: Math.min(drag.y0, drag.y1), x1: Math.max(drag.x0, drag.x1), y1: Math.max(drag.y0, drag.y1) };
   }
-  function commitLasso(pts) {
+  function shapeDragHasExtent(drag: CanvasShapeDrag): boolean {
+    return Math.round(drag.x0) !== Math.round(drag.x1) ||
+      Math.round(drag.y0) !== Math.round(drag.y1);
+  }
+  function commitRect(rect: CanvasSelectionRect): void {
+    const cells: EditorPoint[] = [];
+    for (let y = rect.y0; y <= rect.y1; y++) for (let x = rect.x0; x <= rect.x1; x++) cells.push({ x, y });
+    if (selectionGestureMode) applyRegion(cells, selectionGestureMode);
+    else applyRegion(cells);
+  }
+  function commitLasso(pts: EditorPoint[]): void {
     if (pts.length < 3) return;
     const xs = pts.map((p) => p.x), ys = pts.map((p) => p.y);
     const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
-    const inside = (px, py) => {
+    const inside = (px: number, py: number): boolean => {
       let c = false;
       for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
-        const xi = pts[i].x, yi = pts[i].y, xj = pts[j].x, yj = pts[j].y;
+        const xi = pts[i]!.x, yi = pts[i]!.y, xj = pts[j]!.x, yj = pts[j]!.y;
         if (((yi > py) !== (yj > py)) && (px < ((xj - xi) * (py - yi)) / (yj - yi) + xi)) c = !c;
       }
       return c;
     };
-    const cells = [];
-    for (let y = minY; y <= maxY; y++) for (let x = minX; x <= maxX; x++) if (inBounds(x, y) && inside(x + 0.5, y + 0.5)) cells.push({ x, y });
-    applyRegion(cells, selectionGestureMode);
+    const cells: EditorPoint[] = [];
+    for (let y = minY; y <= maxY; y++) for (let x = minX; x <= maxX; x++) if (inside(x + 0.5, y + 0.5)) cells.push({ x, y });
+    if (selectionGestureMode) applyRegion(cells, selectionGestureMode);
+    else applyRegion(cells);
   }
 
-  function topTextLayerAt(x, y) {
+  function topTextLayerAt(x: number, y: number): EditorTextLayer | null {
     return textLayerAt($layers, $activeLayerId, x, y, {
       isVisible: (layer) => effVisible($layers, layer),
       offsetOf: (layer) => effOffset($layers, layer),
-      boxOf: (layer) => layerBox($layers, layer),
+      boxOf: (layer) => layerBox($layers, layer) || layer.box,
     });
   }
 
-  async function startTextEdit(box) {
+  async function startTextEdit(box: EditorBounds): Promise<void> {
     const wrap = $toolOptions.text.wrap;
     beginStroke();
-    const id = createTextLayer(box, '', $paintColor, wrap, renderTextToCells);
-    const session = { layerId: id, box, wrap, created: true, historyOpen: true };
+    const id = createTextLayer(box, '', $paintColor, wrap, renderTextToCells) as string;
+    const sessionId = ++textEditSession;
+    const session = { layerId: id, box, wrap, created: true, historyOpen: true, sessionId };
     textEdit = session;
     textValue = '';
     resetTextInputHistory();
     rememberTextSelection(id, 0, 0);
     await tick();
-    if (textEdit === session) textInputEl?.focus({ preventScroll: true });
+    if (textEdit?.sessionId === sessionId) textInputEl?.focus({ preventScroll: true });
   }
-  async function editExistingText(layer, selection = null) {
+  async function editExistingText(
+    layer: EditorTextLayer,
+    selection: TextGestureSelection | null = null,
+  ): Promise<void> {
     selectLayer(layer.id);
     const wrap = layer.wrap !== false;
     toolOptions.update((options) => options.text.wrap === wrap ? options : ({
       ...options,
       text: { ...options.text, wrap },
     }));
+    const sessionId = ++textEditSession;
     const session = {
       layerId: layer.id,
-      box: layerBox($layers, layer),
+      box: layerBox($layers, layer) || layer.box,
       wrap,
       created: false,
       historyOpen: false,
+      sessionId,
     };
     textEdit = session;
     textValue = layer.text || '';
     resetTextInputHistory();
     await tick();
-    if (textEdit !== session || !textInputEl) return;
+    if (textEdit?.sessionId !== sessionId || !textInputEl) return;
     textInputEl.focus({ preventScroll: true });
     const start = Math.max(0, Math.min(textValue.length, selection?.start ?? textValue.length));
     const end = Math.max(start, Math.min(textValue.length, selection?.end ?? start));
     textInputEl.setSelectionRange(start, end, selection?.direction || 'none');
     rememberCurrentTextSelection();
   }
-  function rememberCurrentTextSelection(event) {
+  function rememberCurrentTextSelection(event?: Event): void {
     if (!textEdit || !textInputEl) return;
     rememberTextSelection(
       textEdit.layerId,
@@ -1226,17 +1496,17 @@
       event?.type || 'programmatic',
     );
   }
-  function beginTextHistory() {
+  function beginTextHistory(): void {
     if (!textEdit || textEdit.historyOpen) return;
     beginStroke();
     textEdit = { ...textEdit, historyOpen: true };
   }
-  function resetTextInputHistory() {
+  function resetTextInputHistory(): void {
     textInputHistory.reset();
   }
-  function captureTextInputState() {
+  function captureTextInputState(): CanvasTextInputState | null {
     const layer = textEdit ? getLayer(textEdit.layerId) : null;
-    if (!textEdit || !layer) return null;
+    if (!textEdit || layer?.type !== 'text') return null;
     return {
       text: textValue,
       runs: (layer.runs || []).map((run) => ({ ...run })),
@@ -1245,11 +1515,11 @@
       direction: textInputEl?.selectionDirection || 'none',
     };
   }
-  function onTextBeforeInput(event) {
+  function onTextBeforeInput(event: InputEvent): void {
     if (!textEdit) return;
     textInputHistory.beforeInput(event, captureTextInputState());
   }
-  async function restoreTextInputState(state) {
+  async function restoreTextInputState(state: CanvasTextInputState | null): Promise<void> {
     if (!textEdit || !state || !getLayer(textEdit.layerId)) return;
     textValue = state.text;
     updateTextLayer(textEdit.layerId, {
@@ -1263,10 +1533,10 @@
     textInputEl.focus({ preventScroll: true });
     textInputEl.setSelectionRange(state.start, state.end, state.direction);
   }
-  function onTextInput() {
+  function onTextInput(): void {
     if (!textEdit) return;
     const layer = getLayer(textEdit.layerId);
-    if (!layer) return;
+    if (layer?.type !== 'text') return;
     textInputHistory.input(layer.text !== textValue);
     beginTextHistory();
     const runs = remapTextColorRuns(layer.text || '', textValue, layer.runs || [], layer.fg);
@@ -1277,7 +1547,7 @@
     }, renderTextToCells);
     rememberCurrentTextSelection();
   }
-  function updateActiveTextWrap(wrap) {
+  function updateActiveTextWrap(wrap: boolean): void {
     if (!textEdit || textEdit.wrap === wrap || !getLayer(textEdit.layerId)) return;
     beginTextHistory();
     textEdit = { ...textEdit, wrap };
@@ -1293,14 +1563,14 @@
     // Apply before Svelte's render pass so the canvas cannot retain the old text raster.
     updateActiveTextWrap(wrap);
   });
-  function commitText(event) {
+  function commitText(event?: Event): void {
     rememberCurrentTextSelection(event);
     if (textEdit?.historyOpen) endStroke();
     textEdit = null;
     textValue = '';
     resetTextInputHistory();
   }
-  function cancelEmptyText() {
+  function cancelEmptyText(): void {
     const id = textEdit?.layerId;
     if (textEdit?.historyOpen) cancelStroke();
     clearTextSelection(id);
@@ -1308,22 +1578,26 @@
     textValue = '';
     resetTextInputHistory();
   }
-  function finishTextEdit(event) {
+  function finishTextEdit(event?: Event): void {
     if (textEdit?.created && textValue.length === 0) cancelEmptyText();
     else commitText(event);
   }
-  function onTextKey(e) {
-    if (textInputHistory.keydown(e, captureTextInputState(), restoreTextInputState)) return;
-    if (e.key === 'Escape') {
-      e.preventDefault();
-      e.stopPropagation();
-      finishTextEdit(e);
+  function onTextKey(event: KeyboardEvent): void {
+    if (textInputHistory.keydown(event, captureTextInputState(), restoreTextInputState)) return;
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      event.stopPropagation();
+      finishTextEdit(event);
     }
   }
-  function onPointerLeave() { hover = null; }
+  function onPointerLeave(): void { hover = null; }
 
 
-  function updateRasterTransform(layerId, baseTransform, patch) {
+  function updateRasterTransform(
+    layerId: string,
+    baseTransform: EditorLayerTransform,
+    patch: Partial<EditorLayerTransform>,
+  ): void {
     layers.update(($l) => $l.map((l) => (l.id === layerId ? {
       ...l,
       transform: { ...baseTransform, ...patch },
@@ -1332,12 +1606,17 @@
   }
   // Window drags replace any prior owner and revalidate its captured editor context
   // before every move; their finish/cancel callbacks own history cleanup.
-  function trackWindowDrag(pointerId, move, finish = () => {}, options = {}) {
+  function trackWindowDrag(
+    pointerId: number,
+    move: (event: PointerEvent) => void,
+    finish: () => void = () => {},
+    options: WindowDragOptions = {},
+  ): void {
     activeWindowDrag?.(true);
     const owner = options.owned === false ? null : (options.owner || ownGesture(pointerId));
     const cancel = options.cancel || finish;
     let open = true;
-    const close = (cancelled, event) => {
+    const close = (cancelled: boolean, event: PointerEvent | null = null): void => {
       if (!open || (event?.pointerId != null && event.pointerId !== pointerId)) return;
       open = false;
       window.removeEventListener('pointermove', onMove);
@@ -1352,15 +1631,15 @@
       if (cancelled) cancel();
       else finish();
     };
-    const stop = (cancelled = true, event = null) => close(cancelled, event);
-    const onMove = (event) => {
+    const stop: WindowDragStop = (cancelled = true, event = null) => close(cancelled, event);
+    const onMove = (event: PointerEvent): void => {
       if (event.pointerId !== pointerId) return;
       if (owner && !ownerIsCurrent(owner)) { stop(true, event); return; }
       move(event);
     };
-    const onUp = (event) => stop(false, event);
-    const onCancel = (event) => stop(true, event);
-    const onBlur = () => stop(true);
+    const onUp = (event: PointerEvent): void => stop(false, event);
+    const onCancel = (event: PointerEvent): void => stop(true, event);
+    const onBlur = (): void => stop(true);
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
     window.addEventListener('pointercancel', onCancel);
@@ -1376,112 +1655,134 @@
     stopTextWrapSubscription();
     releaseVisibleMediaResources();
   });
-  function dragImageBody(e) {
-    e.preventDefault(); e.stopPropagation();
-    const owner = ownGesture(e.pointerId);
+  function dragImageBody(event: PointerEvent): void {
+    if (event.button !== 0) return;
+    event.preventDefault(); event.stopPropagation();
+    const owner = ownGesture(event.pointerId);
+    if (owner.layerId == null) return;
     const drag = captureRasterBodyDrag(owner.layerId);
     if (!drag) return;
+    clearRasterSnapGuides();
     beginStroke();
-    const start = coordinatesAt(e).fractional;
+    const start = coordinatesAt(event).fractional;
     let current = { dx: 0, dy: 0 };
-    const move = (ev) => {
-      const p = coordinatesAt(ev).fractional;
+    const move = (nextEvent: PointerEvent): void => {
+      const p = coordinatesAt(nextEvent).fractional;
       const delta = rasterBodyDelta(
         drag,
         p.x - start.x,
         p.y - start.y,
-        ev.ctrlKey || ev.metaKey ? null : { x: W / 2, y: H / 2 },
+        nextEvent.ctrlKey || nextEvent.metaKey ? null : { w: W, h: H },
       );
-      if (!delta || (delta.dx === current.dx && delta.dy === current.dy)) return;
+      if (!delta) return;
+      rasterSnapGuides = delta.guides;
+      if (delta.dx === current.dx && delta.dy === current.dy) return;
       current = delta;
       applyRasterBodyDrag(drag, owner.frameIndex, delta.dx, delta.dy);
     };
-    trackWindowDrag(e.pointerId, move, () => {
+    trackWindowDrag(event.pointerId, move, () => {
+      clearRasterSnapGuides();
       if (!current.dx && !current.dy) cancelStroke();
       else endStroke();
-    }, { owner, cancel: cancelStroke });
+    }, { owner, cancel: () => {
+      clearRasterSnapGuides();
+      cancelStroke();
+    } });
   }
-  function dragImageScale(e, axis = 'both') {
-    e.preventDefault(); e.stopPropagation();
-    const owner = ownGesture(e.pointerId);
+  function dragImageScale(event: PointerEvent, axis: 'x' | 'y' | 'both' = 'both'): void {
+    if (event.button !== 0 || !activeImage || !imgGizmo || !gridEl) return;
+    event.preventDefault(); event.stopPropagation();
+    const owner = ownGesture(event.pointerId);
+    if (owner.layerId == null) return;
+    const layerId = owner.layerId;
     const image = activeImage;
     const gizmo = { ...imgGizmo };
     beginStroke();
-    const t0 = { x: W / 2, y: H / 2, scale: 1, rot: 0, ...(image.transform || {}) };
+    const t0: EditorLayerTransform = {
+      ...image.transform,
+      x: image.transform.x ?? W / 2,
+      y: image.transform.y ?? H / 2,
+      scale: image.transform.scale ?? 1,
+      rot: image.transform.rot ?? 0,
+    };
     const s0x = t0.scaleX ?? t0.scale ?? 1, s0y = t0.scaleY ?? t0.scale ?? 1;
     let current = { x: s0x, y: s0y };
     const cxpx = gizmo.cx * metrics.cellW, cypx = gizmo.cy * metrics.cellH;
     const r = gridEl.getBoundingClientRect();
     const angle = -(gizmo.rot || 0) * Math.PI / 180;
     const cos = Math.cos(angle), sin = Math.sin(angle);
-    const localVector = (event) => {
-      const dx = event.clientX - r.left - cxpx;
-      const dy = event.clientY - r.top - cypx;
+    const localVector = (pointerEvent: PointerEvent): EditorPoint => {
+      const dx = pointerEvent.clientX - r.left - cxpx;
+      const dy = pointerEvent.clientY - r.top - cypx;
       return { x: dx * cos - dy * sin, y: dx * sin + dy * cos };
     };
-    const initial = localVector(e);
+    const initial = localVector(event);
     const dx0 = initial.x, dy0 = initial.y;
-    const d0 = Math.hypot(dx0, dy0) || 1;
-    const ax0 = Math.abs(dx0) || 1, ay0 = Math.abs(dy0) || 1;
-    const move = (ev) => {
-      const local = localVector(ev);
-      const dxN = local.x, dyN = local.y;
-      let nx = s0x, ny = s0y;
-      if (axis === 'x') nx = Math.max(0.02, s0x * (Math.abs(dxN) / ax0));
-      else if (axis === 'y') ny = Math.max(0.02, s0y * (Math.abs(dyN) / ay0));
-      else if (ev.shiftKey) {
-        nx = Math.max(0.02, s0x * (Math.abs(dxN) / ax0));
-        ny = Math.max(0.02, s0y * (Math.abs(dyN) / ay0));
-      } else {
-        const k = Math.hypot(dxN, dyN) / d0;
-        nx = Math.max(0.02, s0x * k); ny = Math.max(0.02, s0y * k);
-      }
+    const move = (nextEvent: PointerEvent): void => {
+      const local = localVector(nextEvent);
+      const next = rasterScaleFromDrag(
+        { x: s0x, y: s0y },
+        initial,
+        local,
+        axis === 'both' ? null : axis,
+        nextEvent.shiftKey,
+      );
+      const nx = next.x, ny = next.y;
       if (nx === current.x && ny === current.y) return;
       current = { x: nx, y: ny };
-      updateRasterTransform(owner.layerId, t0, { scaleX: nx, scaleY: ny, scale: undefined });
+      updateRasterTransform(layerId, t0, { scaleX: nx, scaleY: ny, scale: undefined });
     };
-    trackWindowDrag(e.pointerId, move, () => {
+    trackWindowDrag(event.pointerId, move, () => {
       if (current.x === s0x && current.y === s0y) cancelStroke();
       else endStroke();
     }, { owner, cancel: cancelStroke });
   }
-  function dragImageRotate(e) {
-    e.preventDefault(); e.stopPropagation();
-    const owner = ownGesture(e.pointerId);
+  function dragImageRotate(event: PointerEvent): void {
+    if (event.button !== 0 || !activeImage || !imgGizmo || !gridEl) return;
+    event.preventDefault(); event.stopPropagation();
+    const owner = ownGesture(event.pointerId);
+    if (owner.layerId == null) return;
+    const layerId = owner.layerId;
     const image = activeImage;
     const gizmo = { ...imgGizmo };
     beginStroke();
-    const t0 = { x: W / 2, y: H / 2, scale: 1, rot: 0, ...(image.transform || {}) };
+    const t0: EditorLayerTransform = {
+      ...image.transform,
+      x: image.transform.x ?? W / 2,
+      y: image.transform.y ?? H / 2,
+      scale: image.transform.scale ?? 1,
+      rot: image.transform.rot ?? 0,
+    };
     const initial = Number(t0.rot) || 0;
     let current = initial;
     const cxpx = gizmo.cx * metrics.cellW, cypx = gizmo.cy * metrics.cellH;
     const r = gridEl.getBoundingClientRect();
-    const move = (ev) => {
-      const ang = Math.atan2(ev.clientY - r.top - cypx, ev.clientX - r.left - cxpx) * 180 / Math.PI + 90;
-      let a = ang; if (ev.shiftKey) a = Math.round(a / 15) * 15;
+    const move = (nextEvent: PointerEvent): void => {
+      const ang = Math.atan2(nextEvent.clientY - r.top - cypx, nextEvent.clientX - r.left - cxpx) * 180 / Math.PI + 90;
+      let a = ang; if (nextEvent.shiftKey) a = Math.round(a / 15) * 15;
       const next = Math.round(a);
       if (next === current) return;
       current = next;
-      updateRasterTransform(owner.layerId, t0, { rot: next });
+      updateRasterTransform(layerId, t0, { rot: next });
     };
-    trackWindowDrag(e.pointerId, move, () => {
+    trackWindowDrag(event.pointerId, move, () => {
       if (current === initial) cancelStroke();
       else endStroke();
     }, { owner, cancel: cancelStroke });
   }
-  function dragTextBox(mode, e) {
-    if (!activeText) return;
-    e.preventDefault();
-    e.stopPropagation();
-    const owner = ownGesture(e.pointerId);
+  function dragTextBox(mode: 'move' | 'resize', event: PointerEvent): void {
+    if (event.button !== 0 || activeText?.type !== 'text') return;
+    event.preventDefault();
+    event.stopPropagation();
+    const owner = ownGesture(event.pointerId);
     const id = activeText.id;
     const editing = textEdit?.layerId === id;
     const historyWasOpen = !!(editing && textEdit?.historyOpen);
     const b0 = { ...activeText.box };
-    const start = coordinatesAt(e).cell;
+    const start = coordinatesAt(event).cell;
     let changed = false;
-    const move = (event) => {
-      const point = coordinatesAt(event).cell;
+    const move = (nextEvent: PointerEvent): void => {
+      const point = coordinatesAt(nextEvent).cell;
       const dx = point.x - start.x;
       const dy = point.y - start.y;
       const box = mode === 'move'
@@ -1496,10 +1797,10 @@
       updateTextLayer(id, { box }, renderTextToCells);
       if (editing && textEdit?.layerId === id) {
         const updated = getLayer(id);
-        textEdit = { ...textEdit, box: updated ? layerBox(get(layers), updated) : box };
+        textEdit = { ...textEdit, box: updated ? layerBox(get(layers), updated) || box : box };
       }
     };
-    trackWindowDrag(e.pointerId, move, () => {
+    trackWindowDrag(event.pointerId, move, () => {
       if (changed && !editing) endStroke();
     }, {
       owner,
@@ -1514,14 +1815,14 @@
           const restored = getLayer(id);
           if (restored) textEdit = {
             ...textEdit,
-            box: layerBox(get(layers), restored),
+            box: layerBox(get(layers), restored) || b0,
             historyOpen: historyWasOpen,
           };
         }
       },
     });
   }
-  function dragSelectionTransform(handle, event) {
+  function dragSelectionTransform(handle: SelectionTransformHandle, event: PointerEvent): void {
     const current = get(moveState);
     if (event.button !== 0 || !current ||
       (handle !== 'body' && current.mode !== 'transform')) return;
@@ -1529,11 +1830,11 @@
     event.stopPropagation();
     const owner = ownGesture(event.pointerId, {
       layerId: current.layerId,
-      layerPart: current.target === 'mask' ? 'mask' : 'layer',
+      layerPart: current.target === 'mask' ? 'mask' : current.target === 'content-mask' ? 'content-mask' : 'layer',
     });
     const startBounds = { ...current.bounds };
     const start = coordinatesAt(event).fractional;
-    const move = (nextEvent) => {
+    const move = (nextEvent: PointerEvent): void => {
       const point = coordinatesAt(nextEvent).fractional;
       const bounds = transformBoundsFromDrag(
         startBounds,
@@ -1557,59 +1858,70 @@
       ownsMoveState: true,
     });
   }
-  function dragShapeBody(e) {
-    e.preventDefault(); e.stopPropagation();
-    const owner = ownGesture(e.pointerId);
+  function dragShapeBody(event: PointerEvent): void {
+    if (event.button !== 0) return;
+    event.preventDefault(); event.stopPropagation();
+    const owner = ownGesture(event.pointerId);
+    if (owner.layerId == null) return;
     beginStroke();
     const drag = captureShapeBodyDrag(owner.layerId, owner.frameIndex);
     if (!drag) { cancelStroke(); return; }
-    const start = coordinatesAt(e).cell;
+    const start = coordinatesAt(event).cell;
     let current = { dx: 0, dy: 0 };
-    const move = (ev) => {
-      const p = coordinatesAt(ev).cell;
+    const move = (nextEvent: PointerEvent): void => {
+      const p = coordinatesAt(nextEvent).cell;
       const dx = p.x - start.x, dy = p.y - start.y;
       if (dx === current.dx && dy === current.dy) return;
       current = { dx, dy };
       applyShapeBodyDrag(drag, owner.frameIndex, dx, dy);
     };
-    trackWindowDrag(e.pointerId, move, () => {
+    trackWindowDrag(event.pointerId, move, () => {
       if (current.dx || current.dy) endStroke();
       else cancelStroke();
     }, { owner, cancel: cancelStroke });
   }
-  function dragShapeHandle(which, e) {
-    e.preventDefault(); e.stopPropagation();
-    const hitTargets = [...gridEl.querySelectorAll('.shape-handle:not(.passive)')]
+  function shapeHandleType(value: string | undefined): { type?: ShapeTransformHandle['type'] } {
+    return value === 'vertex' || value === 'edge' || value === 'anchor' || value === 'rotation'
+      ? { type: value }
+      : {};
+  }
+  function dragShapeHandle(which: string, event: PointerEvent): void {
+    if (event.button !== 0 || !gridEl || activeShape?.type !== 'shape' || !activeShape.shape) return;
+    event.preventDefault(); event.stopPropagation();
+    const hitTargets = [...gridEl.querySelectorAll<HTMLElement>('.shape-handle:not(.passive)')]
       .map((node, stackOrder) => ({
-        id: node.dataset.shapeHandleId,
-        type: node.dataset.shapeHandleType,
+        id: node.dataset['shapeHandleId'],
+        ...shapeHandleType(node.dataset['shapeHandleType']),
         stackOrder,
         rect: node.getBoundingClientRect(),
       }));
     const handleId = pickShapeTransformHandle(
       hitTargets,
-      { x: e.clientX, y: e.clientY },
+      { x: event.clientX, y: event.clientY },
     ) || which;
-    const owner = ownGesture(e.pointerId);
+    const owner = ownGesture(event.pointerId);
+    if (owner.layerId == null) return;
     beginStroke();
     const id = owner.layerId;
     const s0 = activeShape.shape;
-    const moving = shapeTransformHandles(s0).find((handle) => handle.id === handleId);
+    const rotationAspect = metrics.cellW / metrics.cellH;
+    const moving = shapeTransformHandles(s0, { rotationAspect })
+      .find((handle) => handle.id === handleId);
     if (!moving) { cancelStroke(); return; }
-    const startClient = { x: e.clientX, y: e.clientY };
+    const startClient = { x: event.clientX, y: event.clientY };
     const initialPath = pathValueFromShape(s0);
     let currentPath = initialPath;
     const rotationAnchor = moving.type === 'rotation' ? resolvedShapeAnchor(s0) : null;
     // Accumulate shortest angular steps so crossing ±π never snaps the gesture backward.
     let rotationAngle = rotationAnchor
-      ? Math.atan2(moving.y - rotationAnchor.y, moving.x - rotationAnchor.x)
+      ? shapeRotationAngle(moving, rotationAnchor, rotationAspect) ?? 0
       : 0;
     let rotationDelta = 0;
-    const move = (ev) => {
+    const move = (nextEvent: PointerEvent): void => {
       const target = shapeHandleDragTarget(
         moving,
         startClient,
-        { x: ev.clientX, y: ev.clientY },
+        { x: nextEvent.clientX, y: nextEvent.clientY },
         { w: metrics.cellW, h: metrics.cellH },
       );
       if (!target) return;
@@ -1617,10 +1929,7 @@
         target.x - rotationAnchor.x,
         target.y - rotationAnchor.y,
       ) > 1e-9) {
-        const nextAngle = Math.atan2(
-          target.y - rotationAnchor.y,
-          target.x - rotationAnchor.x,
-        );
+        const nextAngle = shapeRotationAngle(target, rotationAnchor, rotationAspect) ?? rotationAngle;
         let step = nextAngle - rotationAngle;
         if (step > Math.PI) step -= Math.PI * 2;
         if (step < -Math.PI) step += Math.PI * 2;
@@ -1631,10 +1940,11 @@
         ? transformShapeFromCageHandle
         : transformShapeFromHandle;
       const next = transform(s0, handleId, target, {
-        ctrl: ev.ctrlKey,
-        alt: ev.altKey,
-        shift: ev.shiftKey,
+        ctrl: nextEvent.ctrlKey,
+        alt: nextEvent.altKey,
+        shift: nextEvent.shiftKey,
         rotationDelta: rotationAnchor ? rotationDelta : undefined,
+        rotationAspect,
       });
       if (!next) return;
       const nextPath = pathValueFromShape(next);
@@ -1642,36 +1952,38 @@
       currentPath = nextPath;
       applyShapeGeometryEdit(id, owner.frameIndex, next, s0);
     };
-    trackWindowDrag(e.pointerId, move, () => {
+    trackWindowDrag(event.pointerId, move, () => {
       if (shapePathEqual(currentPath, initialPath)) cancelStroke();
       else endStroke();
     }, { owner, cancel: cancelStroke });
   }
 
-  function shapeHandleTitle(handle) {
+  function shapeHandleTitle(handle: ShapeTransformHandle): string {
     if (handle.type === 'anchor') return 'Move transform anchor';
     if (handle.type === 'rotation') return 'Rotate';
     if (handle.localMove) return `Move ${handle.label.toLowerCase()}`;
     return handle.label;
   }
 
-  function shapeHandleCursor(handle, shape) {
+  function shapeHandleCursor(handle: ShapeTransformHandle, shape: EditorShape): string {
     if (handle.type === 'anchor') return 'move';
     if (handle.type === 'rotation') return 'grab';
     const anchor = resolvedShapeAnchor(shape);
     const dx = handle.x - anchor.x;
     const dy = handle.y - anchor.y;
-    if (handle.type === 'edge' && !handle.localMove) {
-      return Math.abs(dx) >= Math.abs(dy) ? 'ew-resize' : 'ns-resize';
-    }
     if (handle.localMove) return 'move';
-    return dx * dy >= 0 ? 'nwse-resize' : 'nesw-resize';
+    const angle = (Math.atan2(dy * metrics.cellH, dx * metrics.cellW) * 180 / Math.PI + 180) % 180;
+    if (angle < 22.5 || angle >= 157.5) return 'ew-resize';
+    if (angle < 67.5) return 'nwse-resize';
+    if (angle < 112.5) return 'ns-resize';
+    return 'nesw-resize';
   }
 
-  let hover = $state(null);
-  let hoverCellX = -1, hoverCellY = -1;
-  function previewChar(fx = 0.5, fy = 0.5, x = hoverCellX, y = hoverCellY) {
-    if ($activeTool === 'eraser') return '';
+  let hover = $state<CanvasHover | null>(null);
+  let hoverCellX: number = -1;
+  let hoverCellY: number = -1;
+  function previewChar(fx = 0.5, fy = 0.5, x = hoverCellX, y = hoverCellY): string {
+    if ($activeTool === 'eraser' || temporaryErase) return '';
     if ($activeTool === 'subcell') {
       const special = specialBrushMode();
       if (special) {
@@ -1679,53 +1991,59 @@
         return previewSpecialBrushGlyph(points, x, y, special);
       }
       const options = $toolOptions.subcell || {};
-      const bits = bitsForStroke(options.mode || options.resolution || 'half', fy < 0.5, fx < 0.5);
+      const resolution = options.mode === 'quarter' || options.resolution === 'quarter'
+        ? 'quarter'
+        : 'half';
+      const bits = bitsForStroke(resolution, fy < 0.5, fx < 0.5);
       const resolved = applySubcell(getCell(hoverCellX, hoverCellY), bits, $paintColor);
-      return resolved ? resolved.c : '';
+      return resolved?.c || '';
     }
     return $activeChar;
   }
 
-  function startCrop(handle, e) {
-    e.preventDefault();
-    e.stopPropagation();
-    if (canvasPointerStartsPan(spaceHeld, e.button)) {
-      beginPan(e);
+  function startCrop(handle: CropHandle, event: PointerEvent): void {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (canvasPointerStartsPan(spaceHeld, event.button)) {
+      beginPan(event);
       return;
     }
-    const owner = ownGesture(e.pointerId);
+    const owner = ownGesture(event.pointerId);
     const original = $cropPending ? { ...$cropPending } : null;
     const base = original || canvasCrop(W, H);
-    const startX = e.clientX, startY = e.clientY;
-    const move = (ev) => {
+    const startX = event.clientX, startY = event.clientY;
+    const move = (nextEvent: PointerEvent): void => {
       const next = dragCrop(
         base,
         handle,
-        (ev.clientX - startX) / metrics.cellW,
-        (ev.clientY - startY) / metrics.cellH,
+        (nextEvent.clientX - startX) / metrics.cellW,
+        (nextEvent.clientY - startY) / metrics.cellH,
       );
       cropPending.set(next);
     };
-    trackWindowDrag(e.pointerId, move, () => {}, {
+    trackWindowDrag(event.pointerId, move, () => {}, {
       owner,
       cancel: () => cropPending.set(original),
     });
   }
-  async function applyCrop() {
+  async function applyCrop(): Promise<void> {
     const rect = $cropPending || canvasCrop(W, H);
     if (cropDiffers(rect, W, H)) cropTimeline(rect);
     cropPending.set(null);
     await tick();
     fitToViewport();
+    window.dispatchEvent(new CustomEvent('crop-finished'));
   }
-  function cancelPendingCrop() {
+  function cancelPendingCrop(): void {
     activeWindowDrag?.(true);
     cropPending.set(null);
+    window.dispatchEvent(new CustomEvent('crop-finished'));
   }
-  let W = $derived($dims.w);
-  let H = $derived($dims.h);
-  let targetW = $derived(ZOOM_STEPS[zoomIdx]);
-  let zoomPct = $derived(Math.round((targetW / 18) * 100));
+  let W = $derived<number>($dims.w);
+  let H = $derived<number>($dims.h);
+  let targetW = $derived<number>(ZOOM_STEPS[zoomIdx] ?? ZOOM_STEPS[0]!);
+  let zoomPct = $derived<number>(Math.round((targetW / 18) * 100));
   $effect.pre(() => {
     if (fontReady && canvasWrapEl) {
       const key = $dims.w + 'x' + $dims.h;
@@ -1746,7 +2064,9 @@
     $visualMediaRequestRevision;
     const layerList = $layers;
     const clipIds = new Set($videoDecodeRequests.keys());
-    untrack(() => syncVisibleMediaResources(layerList, clipIds));
+    untrack(() => {
+      if (isProjectLayerList(layerList)) syncVisibleMediaResources(layerList, clipIds);
+    });
   });
   $effect.pre(() => {
     const layerList = $layers;
@@ -1754,25 +2074,32 @@
     const fpsValue = $fps;
     const allowIntermediate = $playing;
     const requestedClipIds = new Set($videoDecodeRequests.keys());
-    untrack(() => syncVideoLayerFrames(layerList, tickValue, fpsValue, {
-      allowIntermediate,
-      requestedClipIds,
-    }));
+    untrack(() => {
+      if (isProjectLayerList(layerList)) {
+        syncVideoLayerFrames(layerList, tickValue, fpsValue, {
+          allowIntermediate,
+          requestedClipIds,
+        });
+      }
+    });
   });
   $effect(() => {
     if (imageCanvasEl) {
       $layers;
+      W;
+      H;
       metrics;
       $videoFrameRevision;
       $videoRasterStatus;
       $playheadTick;
       $fps;
+      canvasViewportKey;
       canvasDpr;
       untrack(drawImages);
     }
   });
-  let anyBlink = $derived(hasVisibleBlinkingGlyph($layers));
-  let visibleGrid = $derived(applyBlinkPhase(normalizeOutputGrid($grid, W, H), blinkOn));
+  let anyBlink = $derived<boolean>(hasVisibleBlinkingGlyph($layers));
+  let visibleGrid = $derived<EditorCellGrid>(applyBlinkPhase(normalizeOutputGrid($grid, W, H), blinkOn));
   $effect(() => {
     if (canvasEl) {
       visibleGrid;
@@ -1788,7 +2115,7 @@
     { w: metrics.cellW, h: metrics.cellH },
     pan,
   ));
-  let canvasViewportKey = $derived(`${canvasViewport.x},${canvasViewport.y},${canvasViewport.w},${canvasViewport.h}`);
+  let canvasViewportKey = $derived<string>(`${canvasViewport.x},${canvasViewport.y},${canvasViewport.w},${canvasViewport.h}`);
   $effect(() => {
     if (worldCanvasEl) {
       $layers;
@@ -1801,9 +2128,9 @@
       untrack(drawWorld);
     }
   });
-  let activeLayer = $derived($layers.find((l) => l.id === $activeLayerId) || null);
-  let activeBackground = $derived(isBackgroundLayer(activeLayer));
-  let editingEffectMask = $derived($activeLayerPart === 'mask' && isEditingEffectMask(activeLayer));
+  let activeLayer = $derived<EditorLayer | null>($layers.find((layer) => layer.id === $activeLayerId) || null);
+  let activeBackground = $derived<boolean>(isBackgroundLayer(activeLayer));
+  let editingMask = $derived<boolean>(isEditingEffectMask(activeLayer) || isEditingContentMask(activeLayer));
   $effect(() => {
     if (hoverCanvasEl) {
       hover;
@@ -1813,16 +2140,16 @@
       $paintColor;
       $activeTool;
       activeBackground;
-      editingEffectMask;
+      editingMask;
       $colorDepth;
       untrack(drawHover);
     }
   });
-  let onionGhosts = $derived((() => {
+  let onionGhosts = $derived<CanvasOnionGhost[]>((() => {
     if ($playing || $onionSkin === 'off') return [];
     const layerIdx = $onionSkin === 'layer' ? $layers.findIndex((l) => l.id === $activeLayerId) : null;
-    if ($onionSkin === 'layer' && layerIdx < 0) return [];
-    const out = [];
+    if ($onionSkin === 'layer' && (layerIdx ?? -1) < 0) return [];
+    const out: CanvasOnionGhost[] = [];
     for (let d = ONION_DEPTH; d >= 1; d--) {
       const alpha = 0.34 * (1 - (d - 1) / (ONION_DEPTH + 0.5));
       const next = $frames[$activeFrameIndex + d];
@@ -1841,7 +2168,7 @@
       untrack(drawOnion);
     }
   });
-  let ownershipContext = $derived({
+  let ownershipContext = $derived<CanvasOwnershipContext>({
     layerId: $activeLayerId,
     frameIndex: $activeFrameIndex,
     tool: $activeTool,
@@ -1864,30 +2191,60 @@
       untrack(() => activeWindowDrag?.(true));
     }
   });
-  let activeLayerType = $derived(activeLayer?.type || null);
-  let wrongLayer = $derived(isToolDisabledForLayer($activeTool, activeLayer, $activeLayerPart));
-  let shapeBackground = $derived(SHAPE_TOOLS.has($activeTool) && (editingEffectMask || $toolOptions[$activeTool]?.channel === 'background'));
+  function isVideoLayer(layer: EditorLayer): layer is EditorVideoLayer {
+    return layer.type === 'video';
+  }
+  function selectionCoordinate(key: string, index: 0 | 1): number {
+    return Number(key.split(',')[index] ?? 0);
+  }
+
+  let activeLayerType = $derived<EditorLayer['type'] | null>(activeLayer?.type || null);
+  let wrongLayer = $derived<boolean>(isToolDisabledForLayer($activeTool, activeLayer, $activeLayerPart));
+  let shapeBackground = $derived<boolean>(isShapeTool($activeTool) &&
+    (editingMask || $toolOptions[$activeTool].channel !== 'glyph'));
   let textEditLayout = $derived(textEdit ? layoutText(textValue, textEdit.box.w, textEdit.wrap) : null);
-  let textEditRows = $derived(textEdit ? Math.max(textEdit.box.h, textEditLayout.lineCount) : 1);
-  let textEditColumns = $derived(textEdit ? textLayoutColumns(textEditLayout, textEdit.box.w) : 1);
-  let shapeHoverVisible = $derived(!$playing &&
-    $shapeGeometryHover?.layerId === $activeLayerId);
-  let selectedShapeLayer = $derived($layers.find((layer) =>
-    layer.id === $activeLayerId && layer.type === 'shape' &&
-    effVisible($layers, layer) && layer.shape) || null);
+  let textEditRows = $derived<number>(textEdit && textEditLayout ? Math.max(textEdit.box.h, textEditLayout.lineCount) : 1);
+  let textEditColumns = $derived<number>(textEdit && textEditLayout ? textLayoutColumns(textEditLayout, textEdit.box.w) : 1);
+  let activeTextGestureBox = $derived<EditorBounds | null>(textGestureBox(textGesture));
+  let shapeGeometryHoverDetailValue = $derived($shapeGeometryHover);
+  let shapeHoverVisible = $derived<boolean>(!$playing &&
+    shapeGeometryHoverDetailValue?.layerId === $activeLayerId);
+  let selectedShapeLayer = $derived<EditorShapeLayer | null>((() => {
+    const layer = $layers.find((candidate) => candidate.id === $activeLayerId);
+    return layer?.type === 'shape' && effVisible($layers, layer) && layer.shape ? layer : null;
+  })());
   let shapeDirectEdit = $derived(shapeDirectEditTarget(
     selectedShapeLayer,
     $activeTool,
     $playing,
     shapeHoverVisible,
   ));
-  let shapeHandlesInteractive = $derived(shapeDirectEdit.interactive);
-  let activeShape = $derived(shapeDirectEdit.layer);
-  let activeText = $derived(!$playing && $layers.find((l) => l.id === $activeLayerId && l.type === 'text' && effVisible($layers, l) && l.box));
-  let activeImage = $derived(!$playing && $activeTool === 'move' && $layers.find((l) => l.id === $activeLayerId &&
-    (l.type === 'image' || l.type === 'video') && effVisible($layers, l) && rasterLayerSourceSize(l) &&
-    (l.type !== 'video' || videoStateAtTick(l.videoClip, $playheadTick, $fps).active)));
-  let imgGizmo = $derived((() => {
+  let shapeHandlesInteractive = $derived<boolean>(shapeDirectEdit.interactive);
+  let activeShape = $derived<EditorShapeLayer | null>(shapeDirectEdit.layer);
+  let activeText = $derived<EditorTextLayer | null>((() => {
+    if ($playing) return null;
+    const layer = $layers.find((candidate) => candidate.id === $activeLayerId);
+    return layer?.type === 'text' && effVisible($layers, layer) ? layer : null;
+  })());
+  $effect(() => {
+    const edit = textEdit;
+    if (edit && !$layers.some((layer) => layer.id === edit.layerId)) {
+      if (edit.historyOpen) endStroke();
+      clearTextSelection(edit.layerId);
+      textEdit = null;
+      textValue = '';
+      textGesture = null;
+    }
+  });
+  let activeImage = $derived<RasterLayer | null>((() => {
+    if ($playing || $activeTool !== 'move') return null;
+    const layer = $layers.find((candidate) => candidate.id === $activeLayerId);
+    if (!layer || (layer.type !== 'image' && layer.type !== 'video') ||
+      !effVisible($layers, layer) || !rasterLayerSourceSize(layer) ||
+      (layer.type === 'video' && !videoStateAtTick(layer.videoClip, $playheadTick, $fps).active)) return null;
+    return layer;
+  })());
+  let imgGizmo = $derived<CanvasImageGizmo | null>((() => {
     if (!activeImage) return null;
     const geometry = rasterDisplayGeometry($layers, activeImage, { w: W, h: H });
     return geometry && {
@@ -1913,18 +2270,26 @@
   $effect.pre(() => {
     if (moveToolAction === 'finalize') untrack(finalizeMove);
   });
-  let moveBounds = $derived($moveState?.bounds || null);
-  let isBrush = $derived(BRUSH_TOOLS.has($activeTool));
+  let moveBounds = $derived<EditorBounds | null>($moveState?.bounds || null);
+  let isBrush = $derived<boolean>(BRUSH_TOOLS.has($activeTool));
+  let missingVideoLayers = $derived<EditorVideoLayer[]>($layers.filter((layer): layer is EditorVideoLayer =>
+    isVideoLayer(layer) &&
+    (!layer.videoElement || $videoRasterStatus.get(layer.id)?.state === 'error') &&
+    (layer.opacity ?? 1) > 0 &&
+    effVisible($layers, layer) &&
+    videoStateAtTick(layer.videoClip, $playheadTick, $fps).active));
   $effect.pre(() => {
     if ($activeTool !== 'crop' && $cropPending) untrack(() => cropPending.set(null));
   });
 </script>
-<svelte:window onblur={onWindowBlur} onapply-crop={applyCrop}
-  oncancel-crop={cancelPendingCrop} onkeydowncapture={onCanvasWindowKey} />
+<svelte:window onblur={onWindowBlur} onkeydowncapture={onCanvasWindowKey} />
 
 
 <div class="canvas-wrap scroll" bind:this={canvasWrapEl} data-keyboard-context="canvas"
-  onwheel={onWheel} onpointerdowncapture={noteKeyboardContext}
+  role="application" aria-label="Artwork canvas"
+  onwheel={onWheel} onpointerdowncapture={(event) => noteKeyboardContext({
+    target: event.target instanceof Element ? event.target : null,
+  })}
   onpointerdown={() => (selectionMenu = null)}>
   <span class="canvas-label">{documentLabel($fileName, $dirty, W, H)}</span>
 
@@ -1948,6 +2313,11 @@
       onpointerleave={onPointerLeave}
       oncontextmenu={onSelectionContext}
     ></div>
+    {#if gridOn}
+      <div class="outside-grid"
+        style="left: {canvasViewport.x * metrics.cellW}px; top: {canvasViewport.y * metrics.cellH}px; width: {canvasViewport.w * metrics.cellW}px; height: {canvasViewport.h * metrics.cellH}px;"></div>
+      <div class="grid-overlay"></div>
+    {/if}
     <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
     <canvas bind:this={worldCanvasEl} class="world-canvas"></canvas>
     <canvas bind:this={imageCanvasEl} class="image-canvas"></canvas>
@@ -1955,20 +2325,14 @@
     <canvas bind:this={canvasEl} class="cells"></canvas>
     <canvas bind:this={hoverCanvasEl} class="hover-canvas"></canvas>
 
-    {#if gridOn}
-      <div class="outside-grid"
-        style="left: {canvasViewport.x * metrics.cellW}px; top: {canvasViewport.y * metrics.cellH}px; width: {canvasViewport.w * metrics.cellW}px; height: {canvasViewport.h * metrics.cellH}px;"></div>
-      <div class="grid-overlay"></div>
-    {/if}
-
     {#each shapePreview as p}
       <div class="glyph-overlay" class:bg-preview={shapeBackground}
         style="left: calc({p.x} * var(--cell-w)); top: calc({p.y} * var(--cell-h)); color: {disp($paintColor)}; background: {shapeBackground ? disp($paintColor) : 'transparent'}; font-family: {$canvasFont};">{shapeBackground ? '' : p.ch}</div>
     {/each}
     {#if !$moveState}
       {#each [...$selection] as k}
-        {@const sx = +k.split(',')[0]}
-        {@const sy = +k.split(',')[1]}
+        {@const sx = selectionCoordinate(k, 0)}
+        {@const sy = selectionCoordinate(k, 1)}
         <div class="sel-cell" style="left: calc({sx} * var(--cell-w)); top: calc({sy} * var(--cell-h));"></div>
       {/each}
     {/if}
@@ -1979,6 +2343,7 @@
 
     {#if $moveState && moveBounds}
       <div class="move-box" class:transform-preview={$moveState.mode === 'transform'}
+        role="button" aria-label="Move selection" tabindex="-1"
         style="left: calc({moveBounds.x} * var(--cell-w)); top: calc({moveBounds.y} * var(--cell-h)); width: calc({moveBounds.w} * var(--cell-w)); height: calc({moveBounds.h} * var(--cell-h));"
         onpointerdown={(event) => $moveState.mode !== 'transform' && dragSelectionTransform('body', event)}>
       </div>
@@ -1989,7 +2354,7 @@
             onpointerdown={(event) => dragSelectionTransform('body', event)}>
             <span aria-hidden="true"></span>
           </button>
-          {#each TRANSFORM_HANDLES as handle}
+          {#each SELECTION_TRANSFORM_HANDLES as handle}
             <button class="transform-handle {handle}" aria-label="Resize selection {handle}" title="Resize selection"
               onpointerdown={(event) => dragSelectionTransform(handle, event)}></button>
           {/each}
@@ -2002,9 +2367,8 @@
       {/if}
     {/if}
 
-    {#if textGestureBox(textGesture)}
-      {@const b = textGestureBox(textGesture)}
-      <div class="text-box drag" style="left: calc({b.x} * var(--cell-w)); top: calc({b.y} * var(--cell-h)); width: calc({b.w} * var(--cell-w)); height: calc({b.h} * var(--cell-h));"></div>
+    {#if activeTextGestureBox}
+      <div class="text-box drag" style="left: calc({activeTextGestureBox.x} * var(--cell-w)); top: calc({activeTextGestureBox.y} * var(--cell-h)); width: calc({activeTextGestureBox.w} * var(--cell-w)); height: calc({activeTextGestureBox.h} * var(--cell-h));"></div>
     {/if}
     {#if textEdit}
       <div class="text-box edit" style="left: calc({textEdit.box.x} * var(--cell-w)); top: calc({textEdit.box.y} * var(--cell-h)); width: calc({textEdit.box.w} * var(--cell-w)); height: calc({textEdit.box.h} * var(--cell-h));"></div>
@@ -2019,43 +2383,59 @@
 
     {#if $activeTool === 'crop'}
       {@const crop = $cropPending || canvasCrop(W, H)}
-      <div class="crop-frame" class:pending={!!$cropPending} style="left: calc({crop.x} * var(--cell-w)); top: calc({crop.y} * var(--cell-h)); width: calc({crop.w} * var(--cell-w)); height: calc({crop.h} * var(--cell-h));" onpointerdown={(e) => startCrop('move', e)}></div>
-      <div class="crop-handle nw" style="left: calc({crop.x} * var(--cell-w)); top: calc({crop.y} * var(--cell-h));" onpointerdown={(e) => startCrop('nw', e)}></div>
-      <div class="crop-handle n" style="left: calc(({crop.x} + {crop.w} / 2) * var(--cell-w)); top: calc({crop.y} * var(--cell-h));" onpointerdown={(e) => startCrop('n', e)}></div>
-      <div class="crop-handle ne" style="left: calc(({crop.x} + {crop.w}) * var(--cell-w)); top: calc({crop.y} * var(--cell-h));" onpointerdown={(e) => startCrop('ne', e)}></div>
-      <div class="crop-handle e" style="left: calc(({crop.x} + {crop.w}) * var(--cell-w)); top: calc(({crop.y} + {crop.h} / 2) * var(--cell-h));" onpointerdown={(e) => startCrop('e', e)}></div>
-      <div class="crop-handle se" style="left: calc(({crop.x} + {crop.w}) * var(--cell-w)); top: calc(({crop.y} + {crop.h}) * var(--cell-h));" onpointerdown={(e) => startCrop('se', e)}></div>
-      <div class="crop-handle s" style="left: calc(({crop.x} + {crop.w} / 2) * var(--cell-w)); top: calc(({crop.y} + {crop.h}) * var(--cell-h));" onpointerdown={(e) => startCrop('s', e)}></div>
-      <div class="crop-handle sw" style="left: calc({crop.x} * var(--cell-w)); top: calc(({crop.y} + {crop.h}) * var(--cell-h));" onpointerdown={(e) => startCrop('sw', e)}></div>
-      <div class="crop-handle w" style="left: calc({crop.x} * var(--cell-w)); top: calc(({crop.y} + {crop.h} / 2) * var(--cell-h));" onpointerdown={(e) => startCrop('w', e)}></div>
+      <div class="crop-frame" class:pending={!!$cropPending} role="button" aria-label="Move crop" tabindex="-1" style="left: calc({crop.x} * var(--cell-w)); top: calc({crop.y} * var(--cell-h)); width: calc({crop.w} * var(--cell-w)); height: calc({crop.h} * var(--cell-h));" onpointerdown={(e) => startCrop('move', e)}></div>
+      {#each CROP_HANDLES as cropHandle}
+        <div class="crop-handle {cropHandle}" role="button" aria-label={`Resize crop ${cropHandle}`} tabindex="-1"
+          style={cropHandle === 'nw' ? `left: calc(${crop.x} * var(--cell-w)); top: calc(${crop.y} * var(--cell-h));` :
+            cropHandle === 'n' ? `left: calc((${crop.x} + ${crop.w} / 2) * var(--cell-w)); top: calc(${crop.y} * var(--cell-h));` :
+            cropHandle === 'ne' ? `left: calc((${crop.x} + ${crop.w}) * var(--cell-w)); top: calc(${crop.y} * var(--cell-h));` :
+            cropHandle === 'e' ? `left: calc((${crop.x} + ${crop.w}) * var(--cell-w)); top: calc((${crop.y} + ${crop.h} / 2) * var(--cell-h));` :
+            cropHandle === 'se' ? `left: calc((${crop.x} + ${crop.w}) * var(--cell-w)); top: calc((${crop.y} + ${crop.h}) * var(--cell-h));` :
+            cropHandle === 's' ? `left: calc((${crop.x} + ${crop.w} / 2) * var(--cell-w)); top: calc((${crop.y} + ${crop.h}) * var(--cell-h));` :
+            cropHandle === 'sw' ? `left: calc(${crop.x} * var(--cell-w)); top: calc((${crop.y} + ${crop.h}) * var(--cell-h));` :
+            `left: calc(${crop.x} * var(--cell-w)); top: calc((${crop.y} + ${crop.h} / 2) * var(--cell-h));`}
+          onpointerdown={(event) => startCrop(cropHandle, event)}></div>
+      {/each}
       {#if cropDiffers(crop, W, H)}
         <button class="crop-apply" style="left: calc(({crop.x} + {crop.w}) * var(--cell-w)); top: calc(({crop.y} + {crop.h}) * var(--cell-h));" onpointerdown={(event) => onActionPointerDown(event, applyCrop)} title="Apply crop">✓ {crop.w}×{crop.h}</button>
       {/if}
     {/if}
 
-    {#if activeShape}
+    {#if activeShape && activeShape.shape}
       {@const s = activeShape.shape}
       {@const o = effOffset($layers, activeShape)}
       {@const cw = metrics.cellW}{@const ch = metrics.cellH}
       {@const vertices = resolvedShapeVertices(s)}
       {@const cageVertices = shapeTransformCageVertices(s)}
-      {@const handles = shapeTransformHandles(s)}
+      {@const handles = shapeTransformHandles(s, { rotationAspect: cw / ch })}
       {@const hasEditableAnchor = handles.some((handle) => handle.type === 'anchor')}
       {@const hitPoints = vertices.map((point) => `${(point.x + o.x + 0.5) * cw},${(point.y + o.y + 0.5) * ch}`).join(' ')}
       {@const cagePoints = cageVertices.map((point) => `${(point.x + o.x + 0.5) * cw},${(point.y + o.y + 0.5) * ch}`).join(' ')}
       {@const rotationHandle = handles.find((handle) => handle.type === 'rotation')}
       {@const firstEdge = handles.find((handle) => handle.id === 'edge:0')}
       {@const rotationLinkStart = firstEdge || handles.find((handle) => handle.type === 'anchor')}
-      {@const rotationHighlighted = $shapeGeometryHover?.layerId === activeShape.id &&
-        $shapeGeometryHover?.componentId === 'rotation'}
+      {@const rotationHighlighted = shapeGeometryHoverDetailValue?.layerId === activeShape.id &&
+        shapeGeometryHoverDetailValue?.componentId === 'rotation'}
       <svg class="shape-guide" class:interactive={shapeHandlesInteractive} width={W * cw} height={H * ch}>
         {#if s.kind === 'line'}
           <polyline points={cagePoints} />
-          <polyline class="shape-hit" points={hitPoints} onpointerdown={dragShapeBody} />
+          <polyline class="shape-hit" points={hitPoints} role="button" aria-label="Move shape" tabindex="-1" onpointerdown={dragShapeBody} />
         {:else}
           <polygon points={cagePoints} />
-          <polygon class="shape-hit" points={hitPoints} onpointerdown={dragShapeBody} />
+          <polygon class="shape-hit" points={hitPoints} role="button" aria-label="Move shape" tabindex="-1" onpointerdown={dragShapeBody} />
         {/if}
+        {#each handles.filter((handle) => handle.type === 'edge') as handle (handle.id)}
+          {@const edgeStart = handle.from == null ? null : cageVertices[handle.from]}
+          {@const edgeEnd = handle.to == null ? null : cageVertices[handle.to]}
+          {#if shapeHandlesInteractive && edgeStart && edgeEnd}
+            <line class="shape-edge-hit" role="button" tabindex="-1"
+              aria-label={handle.label}
+              x1={(edgeStart.x + o.x + 0.5) * cw} y1={(edgeStart.y + o.y + 0.5) * ch}
+              x2={(edgeEnd.x + o.x + 0.5) * cw} y2={(edgeEnd.y + o.y + 0.5) * ch}
+              style:cursor={shapeHandleCursor(handle, s)}
+              onpointerdown={(event) => dragShapeHandle(handle.id, event)} />
+          {/if}
+        {/each}
         {#if (shapeHandlesInteractive || rotationHighlighted) && rotationHandle && rotationLinkStart}
           <line class="rotation-link"
             x1={(rotationLinkStart.x + o.x + 0.5) * cw} y1={(rotationLinkStart.y + o.y + 0.5) * ch}
@@ -2063,10 +2443,11 @@
         {/if}
       </svg>
       {#each handles as handle (handle.id)}
-        {@const highlighted = $shapeGeometryHover?.layerId === activeShape.id &&
-          $shapeGeometryHover?.componentId === handle.id}
+        {@const highlighted = shapeGeometryHoverDetailValue?.layerId === activeShape.id &&
+          shapeGeometryHoverDetailValue?.componentId === handle.id}
         {#if shapeHandlesInteractive || highlighted}
           <div class="shape-handle {handle.type}"
+            role="button" tabindex="-1"
             class:highlighted class:passive={!shapeHandlesInteractive}
             data-shape-handle-id={handle.id} data-shape-handle-type={handle.type}
             style="left: calc(({handle.x + o.x} + 0.5) * var(--cell-w)); top: calc(({handle.y + o.y} + 0.5) * var(--cell-h)); cursor: {shapeHandleCursor(handle, s)};"
@@ -2077,13 +2458,7 @@
     {/if}
 
     {#if !$playing}
-      {#each $layers.filter((layer) =>
-        layer.type === 'video' &&
-        (!layer.videoElement || $videoRasterStatus.get(layer.id)?.state === 'error') &&
-        (layer.opacity ?? 1) > 0 &&
-        effVisible($layers, layer) &&
-        videoStateAtTick(layer.videoClip, $playheadTick, $fps).active
-      ) as missingVideo (missingVideo.id)}
+      {#each missingVideoLayers as missingVideo (missingVideo.id)}
         {@const decodeFailed = $videoRasterStatus.get(missingVideo.id)?.state === 'error'}
         {@const geometry = rasterDisplayGeometry(
           $layers,
@@ -2100,7 +2475,15 @@
         {/if}
       {/each}
     {/if}
-    {#if activeImage && imgGizmo}
+    {#if rasterSnapGuides.x !== null}
+      <div class="raster-snap-guide vertical" aria-hidden="true"
+        style="left: calc({rasterSnapGuides.x} * var(--cell-w));"></div>
+    {/if}
+    {#if rasterSnapGuides.y !== null}
+      <div class="raster-snap-guide horizontal" aria-hidden="true"
+        style="top: calc({rasterSnapGuides.y} * var(--cell-h));"></div>
+    {/if}
+    {#if activeImage && imgGizmo && $activeTool !== 'crop'}
       {@const cw = metrics.cellW}{@const ch = metrics.cellH}
       {@const cxp = imgGizmo.cx * cw}{@const cyp = imgGizmo.cy * ch}
       {@const wpx = imgGizmo.halfW * 2 * cw}{@const hpx = imgGizmo.halfH * 2 * ch}
@@ -2111,8 +2494,10 @@
         <div class="img-scale tr" onpointerdown={(e) => dragImageScale(e, 'both')}></div>
         <div class="img-scale bl" onpointerdown={(e) => dragImageScale(e, 'both')}></div>
         <div class="img-scale br" onpointerdown={(e) => dragImageScale(e, 'both')}></div>
-        <div class="img-edge e" title="Scale width" onpointerdown={(e) => dragImageScale(e, 'x')}></div>
-        <div class="img-edge s" title="Scale height" onpointerdown={(e) => dragImageScale(e, 'y')}></div>
+        <div class="img-edge n" title="Resize image" onpointerdown={(e) => dragImageScale(e, 'y')}></div>
+        <div class="img-edge e" title="Resize image" onpointerdown={(e) => dragImageScale(e, 'x')}></div>
+        <div class="img-edge s" title="Resize image" onpointerdown={(e) => dragImageScale(e, 'y')}></div>
+        <div class="img-edge w" title="Resize image" onpointerdown={(e) => dragImageScale(e, 'x')}></div>
         <div class="img-rotate" onpointerdown={dragImageRotate}></div>
       </div>
     {/if}
@@ -2120,12 +2505,16 @@
     {#if $activeTool === 'text' && !$playing}
       {#each $layers.filter((l) => l.type === 'text' && effVisible($layers, l) && l.box) as l (l.id)}
         {@const b = layerBox($layers, l)}
-        <div class="text-box outline" class:active={l.id === $activeLayerId} style="left: calc({b.x} * var(--cell-w)); top: calc({b.y} * var(--cell-h)); width: calc({b.w} * var(--cell-w)); height: calc({b.h} * var(--cell-h));"></div>
+        {#if b}
+          <div class="text-box outline" class:active={l.id === $activeLayerId} style="left: calc({b.x} * var(--cell-w)); top: calc({b.y} * var(--cell-h)); width: calc({b.w} * var(--cell-w)); height: calc({b.h} * var(--cell-h));"></div>
+        {/if}
       {/each}
       {#if activeText}
         {@const b = layerBox($layers, activeText)}
-        <div class="text-grip" title="Move text" style="left: calc({b.x} * var(--cell-w)); top: calc({b.y} * var(--cell-h));" onpointerdown={(e) => dragTextBox('move', e)}>✜</div>
-        <div class="text-resize" title="Resize" style="left: calc({b.x + b.w} * var(--cell-w)); top: calc({b.y + b.h} * var(--cell-h));" onpointerdown={(e) => dragTextBox('resize', e)}></div>
+        {#if b}
+          <div class="text-grip" role="button" aria-label="Move text" tabindex="-1" title="Move text" style="left: calc({b.x} * var(--cell-w)); top: calc({b.y} * var(--cell-h));" onpointerdown={(e) => dragTextBox('move', e)}>✜</div>
+          <div class="text-resize" role="button" aria-label="Resize text" tabindex="-1" title="Resize" style="left: calc({b.x + b.w} * var(--cell-w)); top: calc({b.y + b.h} * var(--cell-h));" onpointerdown={(e) => dragTextBox('resize', e)}></div>
+        {/if}
       {/if}
     {/if}
   </div>
@@ -2135,9 +2524,8 @@
       use:popupFocus={{ initialFocus: 'button:not([disabled])' }}
       style="left:{selectionMenu.x}px; top:{selectionMenu.y}px;" data-keyboard-context="canvas"
       onpointerdown={onSelectionMenuPointerDown}>
-      <button role="menuitem" onclick={() => selectionAction('transform')}>Transform selection</button>
       <button role="menuitem" onclick={() => selectionAction('move')}>Move</button>
-      {#if !editingEffectMask}
+      {#if !editingMask}
         <button role="menuitem" onclick={() => selectionAction('copy')}>New layer via copy</button>
         <button role="menuitem" onclick={() => selectionAction('cut')}>New layer via cut</button>
       {/if}
@@ -2191,12 +2579,13 @@
   .stage.playing .onion-canvas,
   .stage.playing .shape-guide,
   .stage.playing .shape-handle,
+  .stage.playing .raster-snap-guide,
   .stage.playing .img-gizmo { display: none; }
   .stage.eyedrop-cursor {
     cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20'%3E%3Cpath d='M14 2l4 4-2 2-4-4zM11 5l4 4-8 8-4 1 1-4z' fill='none' stroke='%23e0a458' stroke-width='1.5'/%3E%3C/svg%3E") 2 18, crosshair;
   }
   .hit-catcher { position: absolute; z-index: 5; background: transparent; }
-  .world-canvas { position: absolute; display: block; z-index: 0; pointer-events: none; }
+  .world-canvas { position: absolute; display: block; z-index: 1; pointer-events: none; }
   .cells { position: absolute; left: 0; top: 0; display: block; z-index: 1; transform-origin: center center; }
   .image-canvas { position: absolute; left: 0; top: 0; display: block; z-index: 0; }
   .video-missing {
@@ -2210,15 +2599,32 @@
   .video-missing strong { font-size: 12px; }
   .video-missing span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; }
   .img-gizmo { position: absolute; z-index: 12; box-sizing: border-box; border: 1px dashed var(--accent); }
+  .raster-snap-guide {
+    position: absolute; z-index: 11; pointer-events: none; background: var(--snap-guide);
+    box-shadow: 0 0 2px var(--pure-black);
+  }
+  .raster-snap-guide.vertical { top: 0; bottom: 0; width: 1px; transform: translateX(-0.5px); }
+  .raster-snap-guide.horizontal { left: 0; right: 0; height: 1px; transform: translateY(-0.5px); }
   .img-body { position: absolute; inset: 0; cursor: move; }
   .img-scale { position: absolute; width: 12px; height: 12px; background: var(--accent); border: 1px solid var(--pure-black); border-radius: 2px; }
   .img-scale.tl { left: -6px; top: -6px; cursor: nwse-resize; }
   .img-scale.tr { right: -6px; top: -6px; cursor: nesw-resize; }
   .img-scale.bl { left: -6px; bottom: -6px; cursor: nesw-resize; }
   .img-scale.br { right: -6px; bottom: -6px; cursor: nwse-resize; }
-  .img-edge { position: absolute; width: 12px; height: 12px; background: var(--accent); border: 1px solid var(--pure-black); border-radius: 2px; }
-  .img-edge.e { right: -6px; top: 50%; margin-top: -6px; cursor: ew-resize; }
-  .img-edge.s { bottom: -6px; left: 50%; margin-left: -6px; cursor: ns-resize; }
+  .img-edge { position: absolute; z-index: 3; }
+  .img-edge::after { content: ''; position: absolute; width: 12px; height: 12px; background: var(--accent); border: 1px solid var(--pure-black); border-radius: 2px; box-sizing: border-box; }
+  .img-edge.e, .img-edge.w { top: 8px; bottom: 8px; width: 12px; cursor: ew-resize; }
+  .img-edge.e { right: -6px; }
+  .img-edge.w { left: -6px; }
+  .img-edge.e::after, .img-edge.w::after { top: 50%; margin-top: -6px; }
+  .img-edge.e::after { right: 0; }
+  .img-edge.w::after { left: 0; }
+  .img-edge.n, .img-edge.s { left: 8px; right: 8px; height: 12px; cursor: ns-resize; }
+  .img-edge.n { top: -6px; }
+  .img-edge.s { bottom: -6px; }
+  .img-edge.n::after, .img-edge.s::after { left: 50%; margin-left: -6px; }
+  .img-edge.n::after { top: 0; }
+  .img-edge.s::after { bottom: 0; }
   .img-rotate { position: absolute; left: 50%; top: -26px; width: 12px; height: 12px; margin-left: -6px; background: var(--pure-white); border: 1px solid var(--pure-black); border-radius: 50%; cursor: grab; }
   .img-rotate::after { content: ''; position: absolute; left: 50%; top: 12px; width: 1px; height: 14px; background: var(--accent); }
   .hover-canvas { position: absolute; left: 0; top: 0; display: block; pointer-events: none; z-index: 4; opacity: 0.55; }
@@ -2233,7 +2639,7 @@
   }
 
   .grid-overlay {
-    position: absolute; inset: 0; pointer-events: none; z-index: 3;
+    position: absolute; inset: 0; pointer-events: none; z-index: 0;
     background-image:
       linear-gradient(to right, var(--grid-line) 1px, transparent 1px),
       linear-gradient(to bottom, var(--grid-line) 1px, transparent 1px);
@@ -2320,12 +2726,12 @@
   .text-box.outline { border: 1px dashed var(--accent-dim); }
   .text-box.outline.active { border-color: var(--accent); }
   .text-grip {
-    position: absolute; z-index: 12; margin: -9px 0 0 -9px; width: 18px; height: 18px;
+    position: absolute; z-index: 12; margin: -20px 0 0 -9px; width: 18px; height: 18px;
     background: var(--accent); color: var(--pure-black); border: 1px solid var(--pure-black); border-radius: 3px;
     font-size: 12px; line-height: 16px; text-align: center; cursor: move;
   }
   .text-resize {
-    position: absolute; z-index: 12; margin: -6px 0 0 -6px; width: 12px; height: 12px;
+    position: absolute; z-index: 12; width: 12px; height: 12px;
     background: var(--accent); border: 1px solid var(--pure-black); border-radius: 2px; cursor: nwse-resize;
   }
   .text-input {
@@ -2353,6 +2759,9 @@
   .shape-guide .rotation-link { stroke-dasharray: none; opacity: 0.7; }
   .shape-guide .shape-hit { stroke: transparent; stroke-width: 10; stroke-dasharray: none; }
   .shape-guide.interactive .shape-hit { pointer-events: stroke; cursor: move; }
+  .shape-guide .shape-edge-hit {
+    stroke: transparent; stroke-width: 12; stroke-dasharray: none; pointer-events: stroke;
+  }
   .shape-handle {
     position: absolute; z-index: 11; width: 20px; height: 20px; margin: -10px 0 0 -10px;
     box-sizing: border-box; background: transparent; border: 0;

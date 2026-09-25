@@ -1,0 +1,211 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <style>
+    html, body { margin: 0; padding: 0; background: #111; }
+    #fixtures { display: flex; width: 780px; flex-wrap: wrap; align-items: flex-start; gap: 4px; }
+    canvas { display: block; }
+  </style>
+</head>
+<body>
+  <div id="fixtures"></div>
+  <script type="module">
+    import { DEFAULT_FAMILY, loadDefaultNerdFont } from '../../src/lib/font.ts';
+    import { CHAR_TABS, charsForTab } from '../../src/lib/charTabs.ts';
+    import { canvasBackingScale, drawGlyph, drawGrid, metricsForCellWidth } from '../../src/lib/render.ts';
+
+    const colors = ['#1666d8', '#e0a458'];
+    const sparseMask = [
+      '..#.......####...............',
+      '.##....#####..#.......###....',
+      '.#.....#......##....####.....',
+      '.....####.....#.....#........',
+      '...######...###..######......',
+      '..##...##.###....#...#####...',
+      '..#....####.....##...........',
+      '.########...##..###..........',
+      '....#########......########..',
+      '.........##...###..########..',
+      '.........####..##............',
+      '............#####............',
+    ];
+    const cases = [];
+    for (const [cellW, cellH] of [[7, 14], [11, 22], [15, 30]]) {
+      cases.push({ surface: 'background', pattern: 'solid', cellW, cellH });
+      cases.push({ surface: 'background', pattern: 'checker', cellW, cellH });
+    }
+    await loadDefaultNerdFont();
+    const surveyMetrics = metricsForCellWidth(`"${DEFAULT_FAMILY}"`, 18);
+    const surveyCanvas = document.createElement('canvas');
+    surveyCanvas.width = surveyMetrics.cellW;
+    surveyCanvas.height = surveyMetrics.cellH;
+    const surveyContext = surveyCanvas.getContext('2d', { willReadFrequently: true });
+    surveyContext.font = `${surveyMetrics.fontPx}px "${DEFAULT_FAMILY}"`;
+    function coverageForGlyph(glyph) {
+      surveyContext.clearRect(0, 0, surveyCanvas.width, surveyCanvas.height);
+      drawGlyph(surveyContext, glyph, '#ffffff', 0, 0, surveyMetrics);
+      const pixels = surveyContext.getImageData(0, 0, surveyCanvas.width, surveyCanvas.height).data;
+      const alphaAt = (x, y) => pixels[(y * surveyCanvas.width + x) * 4 + 3] / 255;
+      let total = 0;
+      let left = 0;
+      let right = 0;
+      let top = 0;
+      let bottom = 0;
+      let horizontal = 0;
+      let vertical = 0;
+      const horizontalBands = [];
+      const verticalBands = [];
+      for (let y = 0; y < surveyCanvas.height; y++) {
+        let rowMinimum = 1;
+        for (let x = 0; x < surveyCanvas.width; x++) total += alphaAt(x, y);
+        for (let x = 0; x < surveyCanvas.width; x++) {
+          rowMinimum = Math.min(rowMinimum, alphaAt(x, y));
+        }
+        horizontalBands.push(rowMinimum >= 0.85);
+        if (rowMinimum >= 0.85) horizontal++;
+        left += Math.max(alphaAt(0, y), alphaAt(Math.min(1, surveyCanvas.width - 1), y));
+        right += Math.max(alphaAt(surveyCanvas.width - 1, y), alphaAt(Math.max(0, surveyCanvas.width - 2), y));
+      }
+      for (let x = 0; x < surveyCanvas.width; x++) {
+        let columnMinimum = 1;
+        for (let y = 0; y < surveyCanvas.height; y++) {
+          columnMinimum = Math.min(columnMinimum, alphaAt(x, y));
+        }
+        verticalBands.push(columnMinimum >= 0.85);
+        if (columnMinimum >= 0.85) vertical++;
+        top += Math.max(alphaAt(x, 0), alphaAt(x, Math.min(1, surveyCanvas.height - 1)));
+        bottom += Math.max(alphaAt(x, surveyCanvas.height - 1), alphaAt(x, Math.max(0, surveyCanvas.height - 2)));
+      }
+      return {
+        glyph,
+        total: total / (surveyCanvas.width * surveyCanvas.height),
+        horizontal: Math.min(horizontal, left, right) / surveyCanvas.height,
+        vertical: Math.min(vertical, top, bottom) / surveyCanvas.width,
+        horizontalBands,
+        verticalBands,
+      };
+    }
+    const catalog = CHAR_TABS.flatMap((tab) => charsForTab(tab, []));
+    const coverage = catalog.map(coverageForGlyph);
+    const fillGlyph = coverage.toSorted((left, right) => right.total - left.total)[0].glyph;
+    const boundaryGlyphs = [...new Map([
+      ...coverage.toSorted((left, right) => right.horizontal - left.horizontal).slice(0, 8),
+      ...coverage.toSorted((left, right) => right.vertical - left.vertical).slice(0, 8),
+    ].filter((candidate) => candidate.horizontal > 0.02 || candidate.vertical > 0.02)
+      .map((candidate) => [candidate.glyph, candidate])).values()];
+    for (const cellW of [8, 11, 14, 18, 24, 32, 44, 60]) {
+      cases.push({ surface: 'glyph', pattern: 'solid', cellW, cellH: 1, glyph: fillGlyph });
+    }
+    for (const cellW of [11, 18, 32]) {
+      cases.push({ surface: 'glyph', pattern: 'checker', cellW, cellH: 1, glyph: fillGlyph });
+    }
+    cases.push({
+      surface: 'glyph', pattern: 'sparse', cellW: 18, cellH: 1, glyph: fillGlyph,
+      columns: sparseMask[0].length, rows: sparseMask.length,
+      colors: ['#000000', '#ffffff'], mask: sparseMask,
+    });
+    for (const candidate of boundaryGlyphs) {
+      cases.push({
+        surface: 'glyph', pattern: 'survey', cellW: 18, cellH: 1, glyph: candidate.glyph,
+        colors: ['#000000', '#ffffff'],
+        horizontalBands: candidate.horizontalBands,
+        verticalBands: candidate.verticalBands,
+      });
+    }
+
+    const container = document.querySelector('#fixtures');
+    const fixtures = cases.map((seamCase, index) => {
+      const columns = seamCase.columns ?? (seamCase.surface === 'glyph' ? 6 : 10);
+      const rows = seamCase.rows ?? 4;
+      const caseColors = seamCase.colors ?? colors;
+      const metrics = seamCase.surface === 'glyph'
+        ? metricsForCellWidth(`"${DEFAULT_FAMILY}"`, seamCase.cellW)
+        : {
+            cellW: seamCase.cellW,
+            cellH: seamCase.cellH,
+            fontPx: Math.max(8, seamCase.cellH - 4),
+            baseline: seamCase.cellH - 4,
+            advance: seamCase.cellW,
+          };
+      const cells = Array.from({ length: rows }, (_, y) =>
+        Array.from({ length: columns }, (_, x) => ({
+          c: seamCase.pattern === 'sparse'
+            ? (seamCase.mask[y][x] === '#' ? seamCase.glyph : '')
+            : (seamCase.surface === 'glyph' ? seamCase.glyph : ''),
+          fg: seamCase.pattern === 'sparse'
+            ? caseColors[1]
+            : (seamCase.pattern === 'solid' ? caseColors[0]
+              : (seamCase.pattern === 'survey' ? caseColors[1] : caseColors[(x + y) % 2])),
+          bg: seamCase.surface === 'background'
+            ? (seamCase.pattern === 'solid' ? caseColors[0] : caseColors[(x + y) % 2])
+            : (seamCase.pattern === 'sparse' || seamCase.pattern === 'survey' ? caseColors[0] : null),
+        })));
+      const canvas = document.createElement('canvas');
+      canvas.id = `seam-${index}`;
+      container.append(canvas);
+      drawGrid(canvas, cells, metrics, {
+        canvasBg: '#111111',
+        fontFamily: `"${DEFAULT_FAMILY}"`,
+      });
+      let terminationLeak = 0;
+      if (seamCase.pattern === 'sparse') {
+        const reference = document.createElement('canvas');
+        const backingScale = canvasBackingScale();
+        reference.width = canvas.width;
+        reference.height = canvas.height;
+        const context = reference.getContext('2d', { willReadFrequently: true });
+        context.setTransform(backingScale, 0, 0, backingScale, 0, 0);
+        context.font = `${metrics.fontPx}px "${DEFAULT_FAMILY}"`;
+        for (let y = 0; y < rows; y++) {
+          for (let x = 0; x < columns; x++) {
+            const cell = cells[y][x];
+            if (!cell.c) continue;
+            drawGlyph(context, cell.c, cell.fg, x, y, metrics);
+          }
+        }
+        context.globalCompositeOperation = 'destination-over';
+        context.fillStyle = caseColors[0];
+        context.fillRect(0, 0, columns * metrics.cellW, rows * metrics.cellH);
+        const actualPixels = canvas.getContext('2d', { willReadFrequently: true })
+          .getImageData(0, 0, canvas.width, canvas.height).data;
+        const referencePixels = context.getImageData(0, 0, reference.width, reference.height).data;
+        for (let row = 0; row < rows; row++) {
+          for (let column = 0; column < columns; column++) {
+            if (seamCase.mask[row][column] === '#') continue;
+            const left = Math.round(column * metrics.cellW * backingScale);
+            const right = Math.round((column + 1) * metrics.cellW * backingScale);
+            const top = Math.round(row * metrics.cellH * backingScale);
+            const bottom = Math.round((row + 1) * metrics.cellH * backingScale);
+            for (let y = top; y < bottom; y++) {
+              for (let x = left; x < right; x++) {
+                const offset = (y * canvas.width + x) * 4;
+                for (let channel = 0; channel < 3; channel++) {
+                  terminationLeak = Math.max(terminationLeak,
+                    actualPixels[offset + channel] - referencePixels[offset + channel]);
+                }
+              }
+            }
+          }
+        }
+      }
+      return {
+        id: canvas.id,
+        columns,
+        rows,
+        cellW: metrics.cellW,
+        cellH: metrics.cellH,
+        colors: caseColors,
+        pattern: seamCase.pattern,
+        surface: seamCase.surface,
+        mask: seamCase.mask,
+        glyph: seamCase.glyph,
+        horizontalBands: seamCase.horizontalBands,
+        verticalBands: seamCase.verticalBands,
+        terminationLeak,
+      };
+    });
+    window.seamSuite = { fixtures };
+  </script>
+</body>
+</html>

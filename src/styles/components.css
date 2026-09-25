@@ -1,0 +1,203 @@
+/* Reusable visual primitives shared by Paintty's specialized panels and dialogs. */
+
+.ui-panel-title {
+  padding: 8px 10px 6px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: 11px;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+}
+
+.properties {
+  scrollbar-gutter: stable;
+}
+
+.properties.playback-locked .row {
+  opacity: 0.45;
+}
+
+.properties .row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 27px;
+  padding: 2px 10px;
+  font-size: 11px;
+}
+
+.properties .row > span:first-child {
+  width: 60px;
+  flex-shrink: 0;
+  color: var(--text-dim);
+}
+
+.properties .row select,
+.properties .row .hex {
+  min-width: 0;
+  height: 22px;
+  flex: 1;
+  padding: 2px 5px;
+  background: var(--canvas-bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font: inherit;
+  line-height: 1.2;
+}
+
+.properties .row select:disabled,
+.properties select:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.properties .row select option:disabled {
+  color: var(--text-faint);
+}
+
+.properties .number-value {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: auto;
+  color: var(--text-dim);
+}
+
+.properties .number-value .number-field {
+  width: 52px;
+  text-align: right;
+}
+
+.properties .hex {
+  font-family: var(--font-mono);
+}
+
+.properties .swatch {
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+}
+
+.properties .hint {
+  padding: 12px 10px;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.properties .track-button,
+.properties .key-button,
+.properties .visibility-value {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
+  padding: 0;
+  color: var(--text-dim);
+  background: transparent;
+  border-color: transparent;
+}
+
+.properties .track-button.active,
+.properties .key-button.keyed,
+.properties .visibility-value {
+  color: var(--accent);
+}
+
+.properties .key-button span {
+  width: 8px;
+  height: 8px;
+  border: 1px solid currentColor;
+  transform: rotate(45deg);
+}
+
+.properties .key-button.keyed span {
+  background: currentColor;
+}
+
+.properties .visibility-value.hidden {
+  color: var(--text-faint);
+}
+
+.properties .track-button:disabled,
+.properties .key-button:disabled,
+.properties .visibility-value:disabled {
+  opacity: 0.3;
+  color: var(--text-dim);
+}
+
+.ui-dialog-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 12px;
+}
+
+.ui-segmented {
+  display: inline-flex;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.ui-segmented > button {
+  min-width: 0;
+  padding: 5px 8px;
+  border: 0;
+  border-right: 1px solid var(--border);
+  background: var(--panel-hi);
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.ui-segmented > button:last-child {
+  border-right: 0;
+}
+
+.ui-segmented > button.on {
+  background: var(--accent-dim);
+  color: var(--on-accent);
+}
+
+.ui-popover-menu {
+  position: fixed;
+  z-index: var(--z-popover);
+  min-width: 150px;
+  padding: 4px;
+  background: var(--panel-hi);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 4px 16px var(--shadow-popover);
+}
+
+.ui-popover-menu > button {
+  display: block;
+  width: 100%;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.ui-popover-menu > button:not(:disabled):hover,
+.ui-popover-menu > button:not(:disabled):focus-visible {
+  background: var(--accent-dim);
+}
+
+.ui-popover-menu > button:disabled {
+  opacity: 0.4;
+}
+
+.ui-popover-menu .divider {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--border);
+}

@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   import Icon from './Icon.svelte';
   import { isTopPopup, popupFocus } from '../lib/popupFocus.js';
   import {
@@ -14,23 +14,43 @@
     createTickPixelTransform, pixelToTick, tickToPixel,
   } from '../lib/timelineViewport.js';
   import { readThemeColor } from '../lib/themeColors.js';
+  import type { AudioClip, AudioTrack } from '../lib/types/project-types.js';
 
-  /**
-   * @typedef {Object} Props
-   * @property {number} [frameWidth]
-   * @property {(event: PointerEvent) => void} [onpointerdown]
-   */
+  interface Props {
+    frameWidth?: number;
+    onpointerdown?: (event: PointerEvent) => void;
+  }
 
-  /** @type {Props} */
-  let { frameWidth = 22, onpointerdown } = $props();
+  interface ClipMenu {
+    x: number;
+    y: number;
+  }
 
-  let selectedClipId = $state(null);
-  let stopDrag = null;
+  interface ClipMenuEvent {
+    clientX: number;
+    clientY: number;
+    preventDefault(): void;
+    stopPropagation(): void;
+  }
+
+  interface WaveformParams {
+    buffer: AudioBuffer | null | undefined;
+    inPoint?: number;
+    outPoint?: number;
+  }
+
+  type DragStop = (cancelled?: boolean) => void;
+  type EditKind = 'move' | 'start' | 'end';
+
+  let { frameWidth = 22, onpointerdown }: Props = $props();
+
+  let selectedClipId = $state<string | null>(null);
+  let stopDrag: DragStop | null = null;
   let volumeEditing = $state(false);
   let volumeMutated = false;
   let volumeDraft = $state(100);
-  let clipMenu = $state(null);
-  let clipMenuEl = $state();
+  let clipMenu = $state<ClipMenu | null>(null);
+  let clipMenuEl = $state<HTMLElement | null>(null);
 
   let selectedClip = $derived($audioClips.find((clip) => clip.id === selectedClipId) || null);
   let selectedAsset = $derived(selectedClip
@@ -46,19 +66,19 @@
   ), 0));
   let timelineDurationTicks = $derived(Math.max(1, $visualDurationTicks, audioDurationTicks));
 
-  function clipSpan(clip) {
+  function clipSpan(clip: AudioClip): number {
     return Math.max(1, audioClipDurationTicks(clip, $fpsStore));
   }
 
-  function clipLeft(clip) {
+  function clipLeft(clip: AudioClip): number {
     return tickToPixel(clip.startTick, tickTransform);
   }
 
-  function clipWidth(clip) {
+  function clipWidth(clip: AudioClip): number {
     return tickToPixel(clip.startTick + clipSpan(clip), tickTransform) - clipLeft(clip);
   }
 
-  function startEdit(event, clip, kind) {
+  function startEdit(event: PointerEvent, clip: AudioClip, kind: EditKind): void {
     if ($playbackActive || event.button !== 0) return;
     event.preventDefault();
     event.stopPropagation();
@@ -70,14 +90,14 @@
     const original = { ...clip };
     const endTick = clip.startTick + clipSpan(clip);
     let mutated = false;
-    const move = (next) => {
+    const move = (next: PointerEvent) => {
       if (next.pointerId !== pointerId) return;
       const delta = Math.round(
         pixelToTick(next.clientX, tickTransform) - pixelToTick(x0, tickTransform),
       );
       const rate = Math.max(1, Number($fpsStore) || 24);
       const before = $audioClips.find((value) => value.id === clip.id);
-      let updated = null;
+      let updated: ReturnType<typeof updateAudioClip> = null;
       if (kind === 'move') {
         updated = updateAudioClip(clip.trackId, clip.id, {
           startTick: Math.max(0, original.startTick + delta),
@@ -112,8 +132,9 @@
         updated.outPoint !== before.outPoint
       )) mutated = true;
     };
-    const finish = (next, cancelled = false) => {
-      if (next?.pointerId != null && next.pointerId !== pointerId) return;
+    const finish = (next: Event | null, cancelled = false) => {
+      const nextPointerId = next && 'pointerId' in next ? next.pointerId : null;
+      if (nextPointerId != null && nextPointerId !== pointerId) return;
       stopDrag?.(cancelled);
     };
     stopDrag = (cancelled = true) => {
@@ -128,14 +149,14 @@
       }
       stopDrag = null;
     };
-    const cancel = (next) => finish(next, true);
+    const cancel = (next: Event) => finish(next, true);
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', finish);
     window.addEventListener('pointercancel', cancel);
     window.addEventListener('blur', cancel);
   }
 
-  function setVolume(value) {
+  function setVolume(value: number): void {
     if (!selectedClip) return;
     if (!volumeEditing) {
       beginStroke();
@@ -147,14 +168,14 @@
     if (updated && updated.volume !== before) volumeMutated = true;
   }
 
-  function beginVolumeEdit() {
+  function beginVolumeEdit(): void {
     if (volumeEditing) return;
     beginStroke();
     volumeEditing = true;
     volumeMutated = false;
   }
 
-  function endVolumeEdit(cancelled = false) {
+  function endVolumeEdit(cancelled = false): void {
     if (!volumeEditing) return;
     if (cancelled) cancelStroke();
     else {
@@ -165,7 +186,7 @@
     volumeMutated = false;
   }
 
-  function toggleMute() {
+  function toggleMute(): void {
     if (!selectedClip) return;
     beginStroke();
     updateAudioClip(selectedClip.trackId, selectedClip.id, { muted: !selectedClip.muted });
@@ -173,20 +194,20 @@
     endStroke();
   }
 
-  function splitClip() {
+  function splitClip(): void {
     if (!selectedClip) return;
     beginStroke();
     const split = splitAudioClipAtTick(
       selectedClip.trackId, selectedClip.id, $playheadTick, $fpsStore,
     );
-    if (split) {
+    if (split?.right) {
       selectedClipId = split.right.id;
       noteAuthoredMutation();
       endStroke();
     } else cancelStroke();
   }
 
-  function deleteClip() {
+  function deleteClip(): void {
     if (!selectedClip) return;
     beginStroke();
     removeAudioClip(selectedClip.trackId, selectedClip.id);
@@ -196,7 +217,7 @@
     clipMenu = null;
   }
 
-  function openClipMenu(event, clip) {
+  function openClipMenu(event: ClipMenuEvent, clip: AudioClip): void {
     if ($playbackActive) return;
     event.preventDefault();
     event.stopPropagation();
@@ -207,7 +228,7 @@
     };
   }
 
-  function openTrackMenu(event, track) {
+  function openTrackMenu(event: MouseEvent & { currentTarget: HTMLElement }, track: AudioTrack): void {
     const clip = $audioClips.find((value) => value.trackId === track.id);
     if (!clip) return;
     const rect = event.currentTarget.getBoundingClientRect();
@@ -220,16 +241,16 @@
     }, clip);
   }
 
-  function closeMenu(event) {
-    if (!event.target.closest?.('.audio-menu')) clipMenu = null;
+  function closeMenu(event: PointerEvent): void {
+    if (!(event.target instanceof Element) || !event.target.closest('.audio-menu')) clipMenu = null;
   }
 
-  function stopMenuPointerDown(event) {
+  function stopMenuPointerDown(event: PointerEvent): void {
     event.stopPropagation();
     onpointerdown?.(event);
   }
 
-  function waveform(node, params) {
+  function waveform(node: HTMLCanvasElement, params: WaveformParams) {
     let current = params;
     const color = readThemeColor('--waveform', node);
     const draw = () => {
@@ -241,6 +262,7 @@
       if (node.width !== width) node.width = width;
       if (node.height !== height) node.height = height;
       const ctx = node.getContext('2d');
+      if (!ctx) return;
       ctx.clearRect(0, 0, width, height);
       if (!buffer?.length || !buffer.numberOfChannels) return;
       const from = Math.max(0, Math.floor(inPoint * buffer.sampleRate));
@@ -266,7 +288,7 @@
     observer?.observe(node);
     draw();
     return {
-      update(next) { current = next; draw(); },
+      update(next: WaveformParams) { current = next; draw(); },
       destroy() { observer?.disconnect(); },
     };
   }

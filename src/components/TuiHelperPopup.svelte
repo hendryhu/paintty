@@ -1,17 +1,14 @@
-  <script>
+<script lang="ts">
   import { CLI_RELEASES_URL } from '../lib/cliDownloads.js';
   import { popupFocus } from '../lib/popupFocus.js';
 
-  /**
-   * @typedef {Object} Props
-   * @property {() => void} [onClose]
-   */
+  interface Props {
+    onClose?: () => void;
+  }
 
-  /** @type {Props} */
-  let { onClose = () => {} } = $props();
+  let { onClose = () => {} }: Props = $props();
   function close() { onClose(); }
-  function backdropClick(event) { if (event.target === event.currentTarget) close(); }
-  function onKey(event) {
+  function onKey(event: KeyboardEvent) {
     if (event.key !== 'Escape') return;
     event.preventDefault();
     event.stopImmediatePropagation();
@@ -22,15 +19,15 @@
 <svelte:window onkeydowncapture={onKey} />
 
 <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-<div class="backdrop" onclick={backdropClick}>
-  <section class="dialog" role="dialog" aria-modal="true" aria-labelledby="helper-title"
+<div class="modal-backdrop backdrop">
+  <div class="modal-dialog dialog" role="dialog" aria-modal="true" aria-labelledby="helper-title"
     tabindex="-1" use:popupFocus={{ initialFocus: '.close' }}>
-    <header>
+    <header class="modal-head">
       <div>
         <h2 id="helper-title">CLI Preview</h2>
         <p>Preview your artwork in a real terminal.</p>
       </div>
-      <button class="close" onclick={close} aria-label="Close">×</button>
+      <button class="modal-close close" onclick={close} aria-label="Close">×</button>
     </header>
 
     <ol>
@@ -44,17 +41,16 @@
       <a href={CLI_RELEASES_URL} target="_blank" rel="noreferrer">Open paintty-cli Releases</a>
     </div>
 
-  </section>
+  </div>
 </div>
 
 <style>
-  .backdrop { position: fixed; inset: 0; z-index: 90; display: flex; align-items: center; justify-content: center; background: var(--modal-backdrop-strong); }
-  .dialog { width: min(520px, calc(100vw - 32px)); background: var(--panel-hi); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: 0 10px 34px var(--shadow-modal-strong); }
-  header { display: flex; justify-content: space-between; gap: 16px; padding: 14px 16px; border-bottom: 1px solid var(--border); }
+   .backdrop { background: var(--modal-backdrop-strong); }
+   .dialog { width: min(520px, calc(100vw - 32px)); box-shadow: 0 10px 34px var(--shadow-modal-strong); }
+   header { gap: 16px; padding: 14px 16px; }
   h2 { margin: 0 0 4px; font-size: 14px; font-weight: 600; color: var(--text); }
   header p { margin: 0; font-size: 11px; color: var(--text-dim); }
-  .close { align-self: flex-start; width: 24px; height: 24px; border: 0; background: transparent; color: var(--text-dim); font-size: 18px; }
-  .close:hover { color: var(--text); }
+   .close { align-self: flex-start; }
   ol { margin: 0; padding: 16px 22px 8px 38px; color: var(--text); font-size: 12px; line-height: 1.7; }
   code { padding: 1px 4px; color: var(--accent); background: var(--panel); border: 1px solid var(--border); border-radius: 3px; font-family: var(--font-mono); }
   .downloads { padding: 8px 16px 14px; }

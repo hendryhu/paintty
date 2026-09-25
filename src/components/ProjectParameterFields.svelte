@@ -1,26 +1,25 @@
-<script>
+<script lang="ts">
   import NumberField from './NumberField.svelte';
   import { PROJECT_PARAMETER_LIMITS } from '../lib/projectPresets.js';
+  import type { ProjectDraft } from '../lib/types/project-types.js';
 
-  /**
-   * @typedef {Object} Props
-   * @property {number} [columns]
-   * @property {number} [rows]
-   * @property {number} [baseFps]
-   * @property {boolean} [disabled]
-   * @property {(detail: { columns: number, rows: number, baseFps: number }) => void} [onCommit]
-   */
+  interface Props {
+    columns?: number;
+    rows?: number;
+    baseFps?: number;
+    disabled?: boolean;
+    onCommit?: (detail: ProjectDraft) => void;
+  }
 
-  /** @type {Props} */
   let {
     columns = $bindable(80),
     rows = $bindable(24),
     baseFps = $bindable(24),
     disabled = false,
     onCommit = () => {},
-  } = $props();
+  }: Props = $props();
 
-  function commit() {
+  function commit(): void {
     onCommit({ columns, rows, baseFps });
   }
 </script>

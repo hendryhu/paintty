@@ -1,45 +1,42 @@
-<script>
+<script lang="ts">
   import { onDestroy, onMount } from 'svelte';
   import { activeChar } from '../lib/stores.js';
   import { canvasFont } from '../lib/font.js';
   import { codepoint } from '../lib/charTabs.js';
   import { matchGlyphsAsync, rasterizeSketchStrokes } from '../lib/sketchMatch.js';
   import { isTopPopup, popupFocus } from '../lib/popupFocus.js';
+  import type {
+    SketchPoint,
+    SketchPopupProps,
+  } from '../lib/types/canvas-components.js';
 
-  /**
-   * @typedef {Object} Props
-   * @property {number} [top]
-   * @property {number} [rightPanelLeft]
-   * @property {(detail: { x: number, y: number, ch: string }) => void} [onGlyphMenu]
-   * @property {() => void} [onClose]
-   */
-
-  /** @type {Props} */
   let {
     top = 100,
     rightPanelLeft = 0,
     onGlyphMenu = () => {},
     onClose = () => {},
-  } = $props();
+  }: SketchPopupProps = $props();
   const WIDTH = 190;
   const BOX_W = 84, BOX_H = 168;
 
-  let canvasEl = $state();
-  let panelEl = $state();
-  let ctx;
-  let drawing = false;
-  let pointerId = null;
-  let results = $state([]);
-  let matching = $state(false);
-  let matchComplete = $state(false);
-  let matchRevision = 0;
-  let strokes = [];
-  let currentStroke = null;
+  let canvasEl = $state<HTMLCanvasElement | null>(null);
+  let panelEl = $state<HTMLDivElement | null>(null);
+  let ctx: CanvasRenderingContext2D | null = null;
+  let drawing: boolean = false;
+  let pointerId: number | null = null;
+  let results = $state<string[]>([]);
+  let matching = $state<boolean>(false);
+  let matchComplete = $state<boolean>(false);
+  let matchRevision: number = 0;
+  let strokes: SketchPoint[][] = [];
+  let currentStroke: SketchPoint[] | null = null;
 
-  let left = $derived(rightPanelLeft - WIDTH - 8);
+  let left = $derived<number>(rightPanelLeft - WIDTH - 8);
 
   onMount(() => {
+    if (!canvasEl) return;
     ctx = canvasEl.getContext('2d');
+    if (!ctx) return;
     ctx.fillStyle = '#000';
     ctx.fillRect(0, 0, BOX_W, BOX_H);
     ctx.strokeStyle = '#fff';
@@ -48,32 +45,36 @@
     ctx.lineJoin = 'round';
   });
 
-  function pos(e) {
+  function pos(event: Pick<PointerEvent, 'clientX' | 'clientY'>): SketchPoint {
+    if (!canvasEl) return { x: 0, y: 0 };
     const r = canvasEl.getBoundingClientRect();
-    return { x: (e.clientX - r.left) * (BOX_W / r.width), y: (e.clientY - r.top) * (BOX_H / r.height) };
+    return { x: (event.clientX - r.left) * (BOX_W / r.width), y: (event.clientY - r.top) * (BOX_H / r.height) };
   }
-  function down(e) {
-    if (e.button !== 0 || drawing) return;
-    e.preventDefault();
+  function down(event: PointerEvent & { currentTarget: HTMLCanvasElement }): void {
+    if (event.button !== 0 || drawing || !ctx) return;
+    event.preventDefault();
     drawing = true;
-    pointerId = e.pointerId;
-    canvasEl.setPointerCapture?.(pointerId);
-    const p = pos(e);
+    pointerId = event.pointerId;
+    event.currentTarget.setPointerCapture?.(pointerId);
+    const p = pos(event);
     currentStroke = [p];
     ctx.beginPath();
     ctx.moveTo(p.x, p.y);
   }
-  function move(e) {
-    if (!drawing || (e.pointerId != null && e.pointerId !== pointerId)) return;
-    const p = pos(e);
+  function move(event: PointerEvent): void {
+    if (!drawing || event.pointerId !== pointerId || !currentStroke || !ctx) return;
+    const p = pos(event);
     const previous = currentStroke?.at(-1);
     if (!previous || Math.hypot(p.x - previous.x, p.y - previous.y) < 0.35) return;
     currentStroke.push(p);
     ctx.lineTo(p.x, p.y);
     ctx.stroke();
   }
-  function up(e) {
-    if (!drawing || (e?.pointerId != null && e.pointerId !== pointerId)) return;
+  function up(event: PointerEvent | FocusEvent): void {
+    const eventPointerId = 'pointerId' in event && typeof event.pointerId === 'number'
+      ? event.pointerId
+      : null;
+    if (!drawing || (eventPointerId != null && eventPointerId !== pointerId) || !canvasEl) return;
     const captured = pointerId;
     drawing = false;
     pointerId = null;
@@ -85,7 +86,7 @@
     recompute();
   }
 
-  async function recompute() {
+  async function recompute(): Promise<void> {
     const revision = ++matchRevision;
     const bitmap = rasterizeSketchStrokes(strokes, {
       sourceWidth: BOX_W,
@@ -114,20 +115,25 @@
     }
   }
 
-  function clear() {
+  function clear(): void {
     matchRevision++;
     matching = false;
-    ctx.fillStyle = '#000';
-    ctx.fillRect(0, 0, BOX_W, BOX_H);
+    if (ctx) {
+      ctx.fillStyle = '#000';
+      ctx.fillRect(0, 0, BOX_W, BOX_H);
+    }
     results = [];
     strokes = [];
     currentStroke = null;
     matchComplete = false;
   }
 
-  function choose(ch) { activeChar.set(ch); }
-  function onContext(e, ch) { e.preventDefault(); onGlyphMenu({ x: e.clientX, y: e.clientY, ch }); }
-  function onKey(event) {
+  function choose(ch: string): void { activeChar.set(ch); }
+  function onContext(event: MouseEvent, ch: string): void {
+    event.preventDefault();
+    onGlyphMenu({ x: event.clientX, y: event.clientY, ch });
+  }
+  function onKey(event: KeyboardEvent): void {
     if (event.key !== 'Escape' || !isTopPopup(panelEl)) return;
     event.preventDefault();
     event.stopImmediatePropagation();

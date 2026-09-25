@@ -83,17 +83,18 @@ button { font: inherit; cursor: pointer; }
   accent-color: var(--accent);
 }
 
-:where(button, input, select, textarea):focus-visible {
-  outline: 1px solid var(--accent);
-  outline-offset: 1px;
-}
+:where(*):focus, :where(*):focus-visible { outline: none; }
 
 :where(button, input, select, textarea):disabled {
   cursor: default;
+  color: var(--text-faint);
+  opacity: 0.42;
 }
 
+select option:disabled { color: var(--text-faint); }
+
 .modal-backdrop {
-  position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center;
+  position: fixed; inset: 0; z-index: var(--z-modal); display: flex; align-items: center; justify-content: center;
   background: var(--modal-backdrop);
 }
 

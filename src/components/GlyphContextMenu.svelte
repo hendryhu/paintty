@@ -1,50 +1,44 @@
-<script>
+<script lang="ts">
   import { tick, untrack } from 'svelte';
   import { favourites, toggleFavourite } from '../lib/stores.js';
   import { codepoint } from '../lib/charTabs.js';
   import { canvasFont } from '../lib/font.js';
   import { isTopPopup, popupFocus } from '../lib/popupFocus.js';
+  import type { GlyphContextMenuProps } from '../lib/types/canvas-components.js';
 
-  /**
-   * @typedef {Object} Props
-   * @property {number} [x]
-   * @property {number} [y]
-   * @property {string} [ch]
-   * @property {any} [onClose]
-   */
-
-  /** @type {Props} */
   let {
     x = 0,
     y = 0,
     ch = '',
     onClose = () => {}
-  } = $props();
+  }: GlyphContextMenuProps = $props();
 
 
-  let menuEl = $state();
-  let px = $state(untrack(() => x)), py = $state(untrack(() => y));
-  async function reposition() {
+  let menuEl = $state<HTMLDivElement | null>(null);
+  let px = $state<number>(untrack(() => x));
+  let py = $state<number>(untrack(() => y));
+  async function reposition(): Promise<void> {
     await tick();
+    if (!menuEl) return;
     const r = menuEl.getBoundingClientRect();
     px = (x + r.width > window.innerWidth) ? Math.max(4, x - r.width) : x;
     py = (y + r.height > window.innerHeight) ? Math.max(4, y - r.height) : y;
   }
 
-  function act(kind) {
+  function act(kind: 'fav' | 'copy' | 'copycp'): void {
     if (kind === 'fav') toggleFavourite(ch);
     else if (kind === 'copy') navigator.clipboard?.writeText(ch);
     else if (kind === 'copycp') navigator.clipboard?.writeText(cp);
     onClose();
   }
-  function onKey(event) {
+  function onKey(event: KeyboardEvent): void {
     if (event.key !== 'Escape' || !isTopPopup(menuEl)) return;
     event.preventDefault();
     event.stopImmediatePropagation();
     onClose();
   }
-  let isFav = $derived($favourites.has(ch));
-  let cp = $derived(codepoint(ch));
+  let isFav = $derived<boolean>($favourites.has(ch));
+  let cp = $derived<string>(codepoint(ch));
   $effect(() => {
     if (menuEl && (x || y)) reposition();
   });

@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   import { onDestroy, tick } from 'svelte';
   import {
     clampNumber,
@@ -11,26 +11,37 @@
   } from '../lib/numberField.js';
   import { onProjectReplaced } from '../lib/documentLifecycle.js';
 
-  /**
-   * @typedef {Object} Props
-   * @property {number} [value]
-   * @property {any} [min]
-   * @property {any} [max]
-   * @property {number} [step]
-   * @property {boolean} [disabled]
-   * @property {string} [ariaLabel]
-   * @property {string} [title]
-   * @property {string} [className]
-   * @property {any} [precision]
-   * @property {(detail: { value: number, source: string }) => void} [onInput]
-   * @property {(detail: { value: number, source: string }) => void} [onChange]
-   * @property {(detail: { value: number, source: string }) => void} [onScrubStart]
-   * @property {(detail: { value: number, source: string }) => void} [onScrubCancel]
-   * @property {(detail: { value: number, source: string }) => void} [onEditStart]
-   * @property {(detail: { value: number, source: string }) => void} [onEditEnd]
-   */
+  type NumberFieldSource = 'drag' | 'keyboard' | 'typing';
 
-  /** @type {Props} */
+  interface NumberFieldDetail {
+    value: number;
+    source: NumberFieldSource;
+  }
+
+  interface Props {
+    value?: number;
+    min?: number;
+    max?: number;
+    step?: number;
+    disabled?: boolean;
+    ariaLabel?: string;
+    title?: string;
+    className?: string;
+    precision?: number;
+    onInput?: (detail: NumberFieldDetail) => void;
+    onChange?: (detail: NumberFieldDetail) => void;
+    onScrubStart?: (detail: NumberFieldDetail) => void;
+    onScrubCancel?: (detail: NumberFieldDetail) => void;
+    onEditStart?: (detail: NumberFieldDetail) => void;
+    onEditEnd?: (detail: NumberFieldDetail) => void;
+  }
+
+  interface NumberPointer {
+    id: number;
+    x: number;
+    value: number;
+  }
+
   let {
     value = $bindable(0),
     min = undefined,
@@ -47,11 +58,11 @@
     onScrubCancel = () => {},
     onEditStart = () => {},
     onEditEnd = () => {},
-  } = $props();
+  }: Props = $props();
 
   const threshold = 4;
-  let input = $state();
-  function displayValue(next) {
+  let input = $state<HTMLInputElement>();
+  function displayValue(next: number): string {
     return formatNumber(next, min, max, precision);
   }
 
@@ -59,7 +70,7 @@
   let dirty = $state(false);
   let dragging = $state(false);
   let scrubStarted = false;
-  let pointer = null;
+  let pointer: NumberPointer | null = null;
   let suppressClick = false;
   let savedCursor = '';
   let savedSelection = '';
@@ -68,21 +79,21 @@
     if (!dirty && !dragging) draft = formatNumber(value, min, max, precision);
   });
 
-  async function selectAll() {
+  async function selectAll(): Promise<void> {
     if (disabled || pointer) return;
     await tick();
     if (pointer) return;
     input?.select();
   }
 
-  function publish(next, source) {
+  function publish(next: number, source: NumberFieldSource): void {
     value = next;
     draft = displayValue(next);
     dirty = false;
     onInput({ value: next, source });
   }
 
-  function commit(source = 'typing') {
+  function commit(source: NumberFieldSource = 'typing'): void {
     if (!dirty) return;
     const next = commitNumber(draft, value, min, max);
     const changed = next !== Number(value);
@@ -93,7 +104,7 @@
     onChange({ value: next, source });
   }
 
-  function setDragCursor(active) {
+  function setDragCursor(active: boolean): void {
     if (active) {
       savedCursor = document.documentElement.style.cursor;
       savedSelection = document.documentElement.style.userSelect;
@@ -105,7 +116,7 @@
     }
   }
 
-  function onPointerDown(event) {
+  function onPointerDown(event: PointerEvent): void {
     if (disabled || event.button !== 0) return;
     suppressClick = false;
     scrubStarted = false;
@@ -125,13 +136,13 @@
     window.addEventListener('blur', onPointerCancel);
   }
 
-  function onCapturedPointerDown(event) {
+  function onCapturedPointerDown(event: PointerEvent): void {
     const path = typeof event.composedPath === 'function' ? event.composedPath() : [];
     const action = numberDraftPointerDownAction({
       dirty,
       disabled,
       pointerActive: !!pointer,
-      sameField: event.target === input || path.includes(input),
+      sameField: event.target === input || (input !== undefined && path.includes(input)),
     });
     if (action !== 'commit-blur') return;
     // Capture-phase precommit lets the destination pointer handler observe the displayed draft.
@@ -139,7 +150,7 @@
     input?.blur();
   }
 
-  function onPointerMove(event) {
+  function onPointerMove(event: PointerEvent): void {
     if (!pointer || event.pointerId !== pointer.id) return;
     const delta = event.clientX - pointer.x;
     if (!dragging && Math.abs(delta) < threshold) return;
@@ -162,14 +173,14 @@
     publish(next, 'drag');
   }
 
-  function removePointerListeners() {
+  function removePointerListeners(): void {
     window.removeEventListener('pointermove', onPointerMove);
     window.removeEventListener('pointerup', onPointerUp);
     window.removeEventListener('pointercancel', onPointerCancel);
     window.removeEventListener('blur', onPointerCancel);
   }
 
-  function finishPointer(cancelled) {
+  function finishPointer(cancelled: boolean): boolean {
     if (!pointer) return false;
     const outcome = resolveNumberScrubEnd(pointer.value, value, cancelled);
     const wasDragging = dragging;
@@ -183,7 +194,7 @@
     }
     if (didScrub) {
       if (cancelled) publish(outcome.value, 'drag');
-      const detail = { value: outcome.value, source: 'drag' };
+      const detail: NumberFieldDetail = { value: outcome.value, source: 'drag' };
       if (outcome.event === 'change') onChange(detail);
       else onScrubCancel(detail);
     }
@@ -191,7 +202,7 @@
     return wasDragging;
   }
 
-  function onPointerUp(event) {
+  function onPointerUp(event: PointerEvent): void {
     if (!pointer || event.pointerId !== pointer.id) return;
     if (!finishPointer(false)) {
       input?.focus({ preventScroll: true });
@@ -199,8 +210,8 @@
     }
   }
 
-  function onPointerCancel(event) {
-    if (!pointer || (event.pointerId != null && event.pointerId !== pointer.id)) return;
+  function onPointerCancel(event: Event): void {
+    if (!pointer || (event instanceof PointerEvent && event.pointerId !== pointer.id)) return;
     finishPointer(true);
   }
 
@@ -216,22 +227,24 @@
     draft = displayValue(value);
   });
 
-  function onDraftInput(event) {
-    draft = event.currentTarget.value;
+  function onDraftInput(event: Event): void {
+    const target = event.currentTarget;
+    if (!(target instanceof HTMLInputElement)) return;
+    draft = target.value;
     dirty = true;
   }
 
-  function onFocus() {
+  function onFocus(): void {
     selectAll();
     onEditStart({ value: Number(value), source: 'typing' });
   }
 
-  function onBlur() {
+  function onBlur(): void {
     commit();
     onEditEnd({ value: Number(value), source: 'typing' });
   }
 
-  function onKeyDown(event) {
+  function onKeyDown(event: KeyboardEvent): void {
     if (event.key === 'Enter') {
       event.preventDefault();
       commit();
@@ -258,7 +271,7 @@
     }
   }
 
-  function onClick(event) {
+  function onClick(event: MouseEvent): void {
     event.preventDefault();
     if (suppressClick) {
       suppressClick = false;

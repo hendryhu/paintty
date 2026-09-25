@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   import { colorDepth } from '../lib/stores.js';
   import {
     saveJSON, saveJSONAs, copyForTerminal, copyForPowerShell, copyAsText,
@@ -31,23 +31,38 @@
   import { notifyError, notifyInfo } from '../lib/notifications.js';
   import { popupFocus, popupOpen } from '../lib/popupFocus.js';
   import { desktopMenuKeyAction, menuTriggerEdge } from '../lib/inputPolicy.js';
+  import type { RecentProjectRecord } from '../lib/recentProjects.js';
+  import { errorText } from '../lib/types/project-types.js';
 
-  /**
-   * @typedef {Object} Props
-   * @property {() => void} [onExport]
-   * @property {() => void} [onHelper]
-   * @property {() => void} [onOpenProject]
-   * @property {(detail: { project: any }) => void} [onOpenRecent]
-   * @property {() => void} [onNewProject]
-   * @property {() => void} [onProjectSettings]
-   * @property {() => void} [onPurgeMedia]
-   * @property {(detail: { open: boolean }) => void} [onMenuState]
-   * @property {() => void} [onAssets]
-   * @property {(detail: any) => void} [onRelinkMedia]
-   * @property {(detail: { page: string }) => void} [onHelp]
-   */
+  interface RelinkMediaDetail {
+    assetId?: string | null;
+  }
 
-  /** @type {Props} */
+  interface Props {
+    onExport?: () => void;
+    onHelper?: () => void;
+    onOpenProject?: () => void;
+    onOpenRecent?: (detail: { project: RecentProjectRecord }) => void;
+    onNewProject?: () => void;
+    onProjectSettings?: () => void;
+    onPurgeMedia?: () => void;
+    onMenuState?: (detail: { open: boolean }) => void;
+    onAssets?: () => void;
+    onRelinkMedia?: (detail: RelinkMediaDetail) => void;
+    onHelp?: (detail: { page: 'animation-json' | 'shortcuts' }) => void;
+  }
+
+  type MenuName = 'Edit' | 'File' | 'Help' | 'Layer';
+  type MenuEdge = 'first' | 'last';
+
+  interface MenuItem {
+    label: string;
+    shortcut?: string;
+    action?: () => false | void | Promise<void>;
+    recent?: boolean;
+    disabled?: boolean | (() => boolean);
+  }
+
   let {
     onExport = () => {},
     onHelper = () => {},
@@ -60,9 +75,9 @@
     onAssets = () => {},
     onRelinkMedia = () => {},
     onHelp = () => {},
-  } = $props();
+  }: Props = $props();
 
-  function importImage() {
+  function importImage(): void {
     if (get(playing)) return;
     const revision = captureProjectRevision();
     const input = document.createElement('input');
@@ -75,19 +90,25 @@
         await importMediaFile(file, 'image', {
           valid: () => isProjectRevisionCurrent(revision) && !get(playing),
         });
-      } catch (err) {
+      } catch (err: unknown) {
         if (!isProjectRevisionCurrent(revision)) return;
-        notifyError('Could not import image: ' + err.message);
+        notifyError('Could not import image: ' + errorText(err));
       }
     };
     input.click();
   }
 
-  function chooseVideo(relinkId = null) {
+  function videoAssetId(layerId: string | null): string | null {
+    if (layerId == null) return null;
+    const layer = getLayer(layerId);
+    return layer?.type === 'video' ? layer.videoClip.assetId : null;
+  }
+
+  function chooseVideo(relinkId: string | null = null): void {
     if (get(playing)) return;
     const revision = captureProjectRevision();
     const startTick = get(playheadTick);
-    const relinkAssetId = relinkId == null ? null : getLayer(relinkId)?.videoClip?.assetId;
+    const relinkAssetId = videoAssetId(relinkId);
     const input = document.createElement('input');
     input.type = 'file';
     input.accept = 'video/*';
@@ -99,7 +120,7 @@
           await replaceMediaFile(relinkAssetId, file, {
             valid: () => isProjectRevisionCurrent(revision) &&
               !get(playing) &&
-              getLayer(relinkId)?.videoClip?.assetId === relinkAssetId,
+              videoAssetId(relinkId) === relinkAssetId,
           });
           return;
         }
@@ -107,15 +128,15 @@
           startTick,
           valid: () => isProjectRevisionCurrent(revision) && !get(playing),
         });
-      } catch (err) {
+      } catch (err: unknown) {
         if (!isProjectRevisionCurrent(revision)) return;
-        notifyError('Could not import video: ' + err.message);
+        notifyError('Could not import video: ' + errorText(err));
       }
     };
     input.click();
   }
 
-  function relinkVideo(id) {
+  function relinkVideo(id: string): void {
     if (getLayer(id)?.type !== 'video') {
       notifyError('Select a video layer first.');
       return;
@@ -123,7 +144,7 @@
     chooseVideo(id);
   }
 
-  function importAudio() {
+  function importAudio(): void {
     if (get(playing)) return;
     const revision = captureProjectRevision();
     const startTick = get(playheadTick);
@@ -138,20 +159,26 @@
           startTick,
           valid: () => isProjectRevisionCurrent(revision) && !get(playing),
         });
-      } catch (err) {
-        if (isProjectRevisionCurrent(revision)) notifyError('Could not import audio: ' + err.message);
+      } catch (err: unknown) {
+        if (isProjectRevisionCurrent(revision)) notifyError('Could not import audio: ' + errorText(err));
       }
     };
     input.click();
   }
 
   onMount(() => {
-    const relink = (event) => relinkVideo(event.detail?.id);
-    const relinkMedia = (event) => onRelinkMedia(event.detail);
-    const importProjectMedia = (event) => {
-      if (event.detail?.kind === 'image') importImage();
-      else if (event.detail?.kind === 'audio') importAudio();
-      else if (event.detail?.kind === 'video') chooseVideo();
+    const relink = (event: Event): void => {
+      if (event instanceof CustomEvent && typeof event.detail?.id === 'string') relinkVideo(event.detail.id);
+    };
+    const relinkMedia = (event: Event): void => {
+      if (event instanceof CustomEvent) onRelinkMedia(event.detail as RelinkMediaDetail);
+    };
+    const importProjectMedia = (event: Event): void => {
+      if (!(event instanceof CustomEvent)) return;
+      const kind: unknown = event.detail?.kind;
+      if (kind === 'image') importImage();
+      else if (kind === 'audio') importAudio();
+      else if (kind === 'video') chooseVideo();
     };
     window.addEventListener('relink-video', relink);
     window.addEventListener('relink-media', relinkMedia);
@@ -165,11 +192,11 @@
     };
   });
 
-  async function saveProject(saveAs = false) {
+  async function saveProject(saveAs: boolean = false): Promise<void> {
     try {
       await (saveAs ? saveJSONAs() : saveJSON());
-    } catch (err) {
-      notifyError(`Could not save file: ${err.message}`);
+    } catch (err: unknown) {
+      notifyError(`Could not save file: ${errorText(err)}`);
     }
   }
   async function copyTerminal() {
@@ -189,12 +216,12 @@
   }
   async function selectWatchFolder() {
     try { await chooseWatchFolder(); }
-    catch (err) {
-      if (err.name !== 'AbortError') notifyError(err.message);
+    catch (err: unknown) {
+      if (!(err instanceof Error) || err.name !== 'AbortError') notifyError(errorText(err));
     }
   }
 
-  const menus = {
+  const menus: Record<MenuName, Array<MenuItem | null>> = {
     File: [
       { label: 'New project…', shortcut: 'Ctrl+N', action: () => onNewProject() },
       { label: 'Open…', action: () => onOpenProject() },
@@ -236,47 +263,53 @@
     ],
   };
 
-  const menuNames = Object.keys(menus);
-  let open = $state(null);
+  const menuNames = Object.keys(menus) as MenuName[];
+  let open = $state<MenuName | null>(null);
   let popupBusyAtOpen = false;
   let recentOpen = $state(false);
-  let restoreTrigger = null;
-  let dropdownEl = $state(null);
-  let recentMenuEl = $state(null);
-  let recentTriggerEl = null;
-  let menuFocusEdge = $state('first');
-  const triggerNodes = new Map();
+  let restoreTrigger: HTMLButtonElement | null = null;
+  let dropdownEl = $state<HTMLDivElement>();
+  let recentMenuEl = $state<HTMLDivElement>();
+  let recentTriggerEl: HTMLButtonElement | null = null;
+  let menuFocusEdge = $state<MenuEdge>('first');
+  const triggerNodes = new Map<MenuName, HTMLButtonElement>();
   $effect(() => {
     onMenuState({ open: open !== null });
   });
   let selectedLayer = $derived($layers.find((layer) => layer.id === $activeLayerId));
-  let purgeUnusedCount = $derived(($authoredRevision, $projectMediaRegistry,
-    unusedMediaAssets($projectMediaRegistry, currentMediaUsageCounts()).length));
+  let purgeUnusedCount = $derived.by(() => {
+    $authoredRevision;
+    $projectMediaRegistry;
+    return unusedMediaAssets($projectMediaRegistry, currentMediaUsageCounts()).length;
+  });
 
-  function registerTrigger(node, name) {
+  function registerTrigger(node: HTMLButtonElement, name: MenuName): { destroy(): void } {
     triggerNodes.set(name, node);
     return { destroy: () => triggerNodes.delete(name) };
   }
-  function registerRecentTrigger(node, enabled) {
+  function registerRecentTrigger(node: HTMLButtonElement, enabled: boolean | undefined) {
     if (enabled) recentTriggerEl = node;
     return {
-      update(next) { if (next) recentTriggerEl = node; },
+      update(next: boolean | undefined) { if (next) recentTriggerEl = node; },
       destroy() { if (recentTriggerEl === node) recentTriggerEl = null; },
     };
   }
-  function menuItems(container) {
-    return [...(container?.querySelectorAll?.('[role="menuitem"]') || [])]
+  function menuItems(container: HTMLElement | null | undefined): HTMLButtonElement[] {
+    return [...(container?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') || [])]
       .filter((item) => !item.disabled && item.closest('[role="menu"]') === container);
   }
-  function edgeItem(container, edge = 'first') {
+  function edgeItem(container: HTMLElement | null | undefined, edge: MenuEdge = 'first'): HTMLButtonElement | undefined {
     const items = menuItems(container);
     return edge === 'last' ? items.at(-1) : items[0];
   }
-  function focusEdge(container, edge = 'first') {
+  function focusEdge(container: HTMLElement | null | undefined, edge: MenuEdge = 'first'): void {
     edgeItem(container, edge)?.focus({ preventScroll: true });
   }
-  async function openMenu(name, edge = 'first', trigger = triggerNodes.get(name)) {
-    if (!menus[name]) return;
+  async function openMenu(
+    name: MenuName,
+    edge: MenuEdge = 'first',
+    trigger: HTMLButtonElement | undefined = triggerNodes.get(name),
+  ): Promise<void> {
     if (open === null) popupBusyAtOpen = get(popupOpen);
     restoreTrigger = trigger || restoreTrigger;
     menuFocusEdge = edge;
@@ -285,33 +318,35 @@
     await tick();
     focusEdge(dropdownEl, edge);
   }
-  function toggle(name, event) {
+  function toggle(name: MenuName, event: MouseEvent): void {
     if (open === name) closeAll(true);
-    else openMenu(name, 'first', event.currentTarget);
+    else if (event.currentTarget instanceof HTMLButtonElement) {
+      openMenu(name, 'first', event.currentTarget);
+    }
   }
-  function toggleFromClick(event, name) {
+  function toggleFromClick(event: MouseEvent, name: MenuName): void {
     event.stopPropagation();
     toggle(name, event);
   }
-  function hoverOpen(name) {
+  function hoverOpen(name: MenuName): void {
     if (open !== null && open !== name) {
       openMenu(name, 'first', triggerNodes.get(name));
     }
   }
-  function itemDisabled(item) { return typeof item?.disabled === 'function' ? item.disabled() : !!item?.disabled; }
-  function recentLabel(project) {
+  function itemDisabled(item: MenuItem): boolean { return typeof item.disabled === 'function' ? item.disabled() : !!item.disabled; }
+  function recentLabel(project: RecentProjectRecord): string {
     const duplicate = $recentProjects.some((item) =>
       item.id !== project.id && item.name.toLocaleLowerCase() === project.name.toLocaleLowerCase());
     if (!duplicate) return project.name;
     return `${project.name} — ${new Date(project.openedAt).toLocaleString()}`;
   }
-  function run(item) {
-    if (item && !item.recent && !itemDisabled(item)) {
+  function run(item: MenuItem): void {
+    if (!item.recent && !itemDisabled(item) && item.action) {
       closeAll(true);
       item.action();
     }
   }
-  function runRecent(project) {
+  function runRecent(project: RecentProjectRecord): void {
     closeAll(true);
     onOpenRecent({ project });
   }
@@ -322,47 +357,52 @@
     }
     closeAll(true);
   }
-  function closeAll(restore = false) {
+  function closeAll(restore: boolean = false): void {
     const target = restore ? restoreTrigger : null;
     open = null;
     recentOpen = false;
     restoreTrigger = null;
     popupBusyAtOpen = false;
-    target?.focus?.({ preventScroll: true });
+    target?.focus({ preventScroll: true });
   }
-  async function openRecentMenu(edge = 'first') {
+  async function openRecentMenu(edge: MenuEdge = 'first'): Promise<void> {
     recentOpen = true;
     await tick();
     focusEdge(recentMenuEl, edge);
   }
-  function switchTopMenu(delta) {
-    const index = Math.max(0, menuNames.indexOf(open));
-    const next = menuNames[(index + delta + menuNames.length) % menuNames.length];
+  function switchTopMenu(delta: number): void {
+    const index = Math.max(0, open === null ? -1 : menuNames.indexOf(open));
+    const next = menuNames[(index + delta + menuNames.length) % menuNames.length]!;
     openMenu(next, delta < 0 ? 'last' : 'first', triggerNodes.get(next));
   }
-  function moveMenuFocus(container, current, delta) {
+  function moveMenuFocus(container: HTMLElement, current: HTMLButtonElement, delta: number): void {
     const items = menuItems(container);
     const index = items.indexOf(current);
     if (!items.length) return;
-    items[(Math.max(0, index) + delta + items.length) % items.length]
+    items[(Math.max(0, index) + delta + items.length) % items.length]!
       .focus({ preventScroll: true });
   }
-  function consumeMenuKey(event) {
+  function consumeMenuKey(event: KeyboardEvent): void {
     event.preventDefault();
     event.stopImmediatePropagation();
   }
-  function onTriggerKey(event, name) {
+  function onTriggerKey(event: KeyboardEvent, name: MenuName): void {
     const edge = menuTriggerEdge(event.key);
     if (!edge) return;
     consumeMenuKey(event);
-    openMenu(name, edge, event.currentTarget);
+    if (event.currentTarget instanceof HTMLButtonElement) {
+      openMenu(name, edge, event.currentTarget);
+    }
   }
-  function onMenuKey(event) {
+  function onMenuKey(event: KeyboardEvent): void {
     if (open === null) return;
-    const item = event.target?.closest?.('[role="menuitem"]');
-    const container = item?.closest?.('[role="menu"]');
+    const target = event.target;
+    const item = target instanceof Element
+      ? target.closest<HTMLButtonElement>('[role="menuitem"]')
+      : null;
+    const container = item?.closest<HTMLElement>('[role="menu"]');
     const action = desktopMenuKeyAction(event.key, {
-      hasSubmenu: item?.dataset.recent === 'true',
+      hasSubmenu: item?.dataset['recent'] === 'true',
       inSubmenu: container === recentMenuEl,
     });
     if (action === 'close') {
@@ -392,7 +432,7 @@
       item.click();
     }
   }
-  function onWindowKey(event) {
+  function onWindowKey(event: KeyboardEvent): void {
     if (open !== null && (event.ctrlKey || event.metaKey) &&
       !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'n') {
       event.preventDefault();
@@ -408,10 +448,14 @@
 
   function openPrefs() { window.dispatchEvent(new CustomEvent('open-prefs')); }
 
+  function onWindowClick(event: MouseEvent): void {
+    if (!(event.target instanceof Element) || !event.target.closest('.menubar')) closeAll(true);
+  }
+
   function toggleDepth() { colorDepth.update((d) => (d === 'truecolor' ? '256' : 'truecolor')); }
 </script>
 
-<svelte:window onclick={(e) => { if (!e.target.closest('.menubar')) closeAll(true); }} onkeydowncapture={onWindowKey} />
+<svelte:window onclick={onWindowClick} onkeydowncapture={onWindowKey} />
 
 <div class="menubar" role="menubar" aria-label="Application menu" tabindex="-1" onkeydown={onMenuKey}>
   <span class="logo">paintty</span>
@@ -428,9 +472,9 @@
             {#if item === null}
               <div class="divider" role="separator"></div>
             {:else}
-              <div class="menu-entry" class:has-submenu={item.recent}
-                onpointerenter={() => (recentOpen = !!item.recent)}>
+              <div class="menu-entry" class:has-submenu={item.recent}>
                 <button class="menu-item" class:submenu-trigger={item.recent}
+                  onpointerenter={() => (recentOpen = !!item.recent)}
                   role="menuitem" data-recent={item.recent ? 'true' : undefined}
                   use:registerRecentTrigger={item.recent}
                   disabled={itemDisabled(item)}
@@ -474,7 +518,7 @@
   .menubar {
     grid-area: menubar; display: flex; align-items: center; gap: 2px;
     padding: 0 10px; background: var(--panel); border-bottom: 1px solid var(--border);
-    position: relative; z-index: 70; white-space: nowrap; overflow: visible;
+    position: relative; z-index: var(--z-menubar); white-space: nowrap; overflow: visible;
   }
   .logo {
     color: var(--accent); font-weight: bold; letter-spacing: 0.5px;
@@ -489,7 +533,7 @@
   .dropdown {
     position: absolute; top: 100%; left: 0; min-width: 170px; margin-top: 2px;
     background: var(--panel-hi); border: 1px solid var(--border);
-    border-radius: var(--radius); box-shadow: 0 6px 20px var(--shadow-popover); padding: 4px; z-index: 80;
+    border-radius: var(--radius); box-shadow: 0 6px 20px var(--shadow-popover); padding: 4px; z-index: var(--z-menu);
   }
   .menu-item {
     display: flex; width: 100%; align-items: center; justify-content: space-between;
@@ -497,7 +541,8 @@
     border-radius: var(--radius-sm); background: transparent; border: none;
     color: var(--text); font-size: 12px; white-space: nowrap;
   }
-  .menu-item:not(:disabled):hover { background: var(--accent-dim); }
+  .menu-item:not(:disabled):hover,
+  .menu-item:not(:disabled):focus-visible { background: var(--accent-dim); }
   .menu-item:disabled { color: var(--text-faint); cursor: not-allowed; }
   .menu-entry { position: relative; }
   .submenu-trigger { gap: 18px; }

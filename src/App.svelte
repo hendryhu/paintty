@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   import MenuBar from './components/MenuBar.svelte';
   import ToolOptionsBar from './components/ToolOptionsBar.svelte';
   import ToolsPanel from './components/ToolsPanel.svelte';
@@ -35,7 +35,7 @@
   import { colorEditSession } from './lib/colorEditSession.js';
   import { documentTitle } from './lib/documentState.js';
   import { dismissNotification, notifications, notifyError, notifyInfo } from './lib/notifications.js';
-  import { selection, clearSelection, hasSelection, moveState, beginTransformSelection, beginLayerMove, finalizeMove, cancelMove } from './lib/selection.js';
+  import { selection, clearSelection, moveState, beginLayerMove, finalizeMove, cancelMove } from './lib/selection.js';
   import {
     activeFrameIndex,
     clearClipSelection,
@@ -74,7 +74,12 @@
   import { loadJSON, openFileDialog, saveJSON, saveJSONAs, serializeJSON } from './lib/fileio.js';
   import { performDiscardedProjectAction } from './lib/documentReplacement.js';
   import { popupFocus, popupOpen } from './lib/popupFocus.js';
-  import { layerRenameShortcutAction, nativeInputOwnsKey, projectSaveShortcutAction } from './lib/inputPolicy.js';
+  import {
+    layerRenameShortcutAction,
+    nativeBrowserZoomShortcut,
+    nativeInputOwnsKey,
+    projectSaveShortcutAction,
+  } from './lib/inputPolicy.js';
   import { MINIMUM_VIEWPORT, viewportGate } from './lib/viewportGate.js';
   import { glyphPaintingUnavailable as glyphPaintingUnavailableFor } from './lib/toolAvailability.js';
   import {
@@ -82,17 +87,38 @@
     resizeRightPanelWithKey,
     rightPanelDividerGeometry,
   } from './lib/panelLayout.js';
+  import type { GlyphMenuDetail, SketchOpenDetail } from './lib/types/canvas-components.js';
+  import type { EditorPoint, EditorTool } from './lib/types/editor-domain.js';
+  import type { RecentProjectRecord } from './lib/recentProjects.js';
+  import { errorText, isUnknownRecord } from './lib/types/project-types.js';
 
-  const CAN_EYEDROP = new Set([
-    'brush', 'eraser', 'subcell', 'fill', 'line', 'rect', 'circle', 'polygon',
-  ]);
-  function refreshAlt(e) {
-    altEyedrop.set(e.altKey && CAN_EYEDROP.has(get(activeTool)));
+  type PanelName = 'right' | 'timeline';
+  type HelpPage = 'animation-json' | 'shortcuts';
+  interface DocumentReplacementRequest {
+    run: () => boolean | Promise<void>;
   }
 
-  let rightEl = $state();
-  let propertiesSectEl = $state();
-  let charSectEl = $state();
+  const CAN_EYEDROP: ReadonlySet<EditorTool> = new Set([
+    'brush', 'eraser', 'subcell', 'fill', 'line', 'rect', 'circle', 'polygon',
+  ]);
+  let eyedropKeyHeld = false;
+  function refreshAlt(e: KeyboardEvent): void {
+    const typing = isEditingTarget(e.target);
+    if (e.key === 'Alt' && !typing && CAN_EYEDROP.has(get(activeTool))) e.preventDefault();
+    if (e.key?.toLowerCase() === 'i') {
+      if (e.type === 'keyup') eyedropKeyHeld = false;
+      else if (!typing && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault();
+        eyedropKeyHeld = true;
+      }
+    }
+    altEyedrop.set((e.altKey || eyedropKeyHeld) && CAN_EYEDROP.has(get(activeTool)));
+  }
+  function preventNativeContextMenu(event: MouseEvent): void { event.preventDefault(); }
+
+  let rightEl = $state<HTMLDivElement | null>(null);
+  let propertiesSectEl = $state<HTMLDivElement | null>(null);
+  let charSectEl = $state<HTMLDivElement | null>(null);
 
   let sketchOpen = $state(false);
   let sketchTop = $state(100);
@@ -111,13 +137,13 @@
     measureRight();
   }
   let rightPanelDivider = $derived(rightPanelDividerGeometry(viewportState.width, rightPanelWidth));
-  function startPanelResize(event, panel) {
+  function startPanelResize(event: PointerEvent, panel: PanelName): void {
     if (event.button !== 0) return;
     event.preventDefault();
     const pointerId = event.pointerId;
     const startX = event.clientX, startY = event.clientY;
     const startWidth = rightPanelWidth, startHeight = timelineHeight;
-    const move = (next) => {
+    const move = (next: PointerEvent): void => {
       if (next.pointerId !== pointerId) return;
       if (panel === 'right') {
         rightPanelWidth = resizeRightPanelFromPointer(startWidth, startX, next.clientX);
@@ -126,8 +152,8 @@
         timelineHeight = Math.max(180, Math.min(window.innerHeight - 120, startHeight + startY - next.clientY));
       }
     };
-    const end = (next) => {
-      if (next?.pointerId != null && next.pointerId !== pointerId) return;
+    const end = (next: Event): void => {
+      if ('pointerId' in next && typeof next.pointerId === 'number' && next.pointerId !== pointerId) return;
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', end);
       window.removeEventListener('pointercancel', end);
@@ -138,23 +164,23 @@
     window.addEventListener('pointercancel', end);
     window.addEventListener('blur', end);
   }
-  function resizePanelWithKey(event, panel) {
+  function resizePanelWithKey(event: KeyboardEvent, panel: PanelName): void {
     const rightWidth = panel === 'right' ? resizeRightPanelWithKey(rightPanelWidth, event.key) : null;
     const direction = panel === 'timeline' ? (event.key === 'ArrowUp' ? 1 : event.key === 'ArrowDown' ? -1 : 0) : 0;
     if (rightWidth == null && !direction) return;
     event.preventDefault();
-    if (panel === 'right') rightPanelWidth = rightWidth;
+    if (panel === 'right' && rightWidth != null) rightPanelWidth = rightWidth;
     else timelineHeight = Math.max(180, Math.min(window.innerHeight - 120, timelineHeight + direction * 16));
     measureRight();
   }
 
-  function onSketch(detail) {
+  function onSketch(detail: SketchOpenDetail): void {
     sketchOpen = !sketchOpen;
     sketchTop = detail.top;
     measureRight();
   }
 
-  function openColorPicker(detail) {
+  function openColorPicker(detail: EditorPoint): void {
     colorEditSession.open({ kind: 'toolbar' }, detail);
   }
 
@@ -165,9 +191,9 @@
   let purgeMediaOpen = $state(false);
   let helperOpen = $state(false);
   let assetsOpen = $state(false);
-  let assetsFocusId = $state(null);
-  let helpPage = $state(null);
-  let discardRequest = $state(null);
+  let assetsFocusId = $state<string | null>(null);
+  let helpPage = $state<HelpPage | null>(null);
+  let discardRequest = $state<DocumentReplacementRequest | null>(null);
   let discardBusy = $state(false);
   let recoveryReady = $state(false);
   let recoveryStartupError = $state('');
@@ -183,7 +209,7 @@
       colorEditSession.validate();
     }
   });
-  let convertLayerId = $state(null);
+  let convertLayerId = $state<string | null>(null);
   function audioPreviewOptions(tick = get(activeFrameIndex)) {
     return {
       tick,
@@ -195,9 +221,10 @@
   }
   async function disconnectPreview() {
     try { await disconnectWatchFolder(); }
-    catch (error) { notifyError(`Could not disconnect watch folder: ${error.message}`); }
+    catch (error: unknown) { notifyError(`Could not disconnect watch folder: ${errorText(error)}`); }
   }
 
+  let toolBeforeCrop = get(activeTool);
   onMount(() => {
     let disposed = false;
     let stopPreviewSync = () => {};
@@ -216,9 +243,16 @@
     let previousTool = get(activeTool);
     const stopToolWatch = activeTool.subscribe((tool) => {
       if (tool === previousTool) return;
+      if (tool === 'crop' && previousTool !== 'crop') toolBeforeCrop = previousTool;
       previousTool = tool;
       releaseKeyboardContext();
     });
+    const finishCrop = () => {
+      if (get(activeTool) === 'crop') {
+        activeTool.set(toolBeforeCrop === 'crop' ? 'brush' : toolBeforeCrop);
+      }
+    };
+    window.addEventListener('crop-finished', finishCrop);
     startBrowserRecovery().then((stop) => {
       if (disposed) {
         stop();
@@ -237,7 +271,11 @@
     });
     const h = () => (prefsOpen = true);
     const mv = () => beginLayerMove();
-    const convert = (event) => (convertLayerId = event.detail.id);
+    const convert = (event: Event): void => {
+      if (!(event instanceof CustomEvent) || !isUnknownRecord(event.detail)) return;
+      const id = event.detail['id'];
+      if (typeof id === 'string') convertLayerId = id;
+    };
     const stopProjectReplaced = onProjectReplaced(() => {
       releaseKeyboardContext();
       exportOpen = false;
@@ -269,6 +307,7 @@
       stopPlaybackWatch();
       stopAudioCycleWatch();
       stopToolWatch();
+      window.removeEventListener('crop-finished', finishCrop);
       closeAudioPreview();
       stopProjectReplaced();
       window.removeEventListener('open-prefs', h);
@@ -277,22 +316,25 @@
     };
   });
 
-  let menu = $state(null);
+  let menu = $state<GlyphMenuDetail | null>(null);
   let topMenuOpen = $state(false);
   let pointerInputActive = false;
-  function onGlyphMenu(detail) { menu = detail; }
+  function onGlyphMenu(detail: GlyphMenuDetail): void { menu = detail; }
   function closeMenu() { menu = null; }
 
-  function onWindowClick(e) {
-    if (menu && !e.target.closest('.ctx-menu')) closeMenu();
+  function onWindowClick(e: MouseEvent): void {
+    const target = e.target instanceof Element ? e.target : null;
+    if (menu && !target?.closest('.ctx-menu')) closeMenu();
   }
-  function onWindowPointerDown(e) {
+  function onWindowPointerDown(e: PointerEvent): void {
     if (viewportState.blocked) {
       e.preventDefault();
       e.stopImmediatePropagation();
       return;
     }
-    noteKeyboardContext(e);
+    noteKeyboardContext({
+      target: e.target instanceof Element ? e.target : null,
+    });
     pointerInputActive = true;
     if (!$colorEditSession.active) return;
     const target = e.target instanceof Element ? e.target : null;
@@ -311,9 +353,10 @@
   }
   function onWindowBlur() {
     pointerInputActive = false;
+    eyedropKeyHeld = false;
     altEyedrop.set(false);
   }
-  function onWindowKeyDown(event) {
+  function onWindowKeyDown(event: KeyboardEvent): void {
     onKey(event);
     refreshAlt(event);
   }
@@ -323,7 +366,6 @@
       prefsOpen,
       newProjectOpen,
       projectSettingsOpen,
-      purgeMediaOpen,
       assetsOpen,
       helperOpen,
       helpOpen: helpPage != null,
@@ -331,7 +373,7 @@
       discardOpen: discardRequest != null,
     });
   }
-  function requestDocumentReplacement(request) {
+  function requestDocumentReplacement(request: DocumentReplacementRequest): void {
     if (get(dirty)) {
       discardRequest = request;
       return;
@@ -341,10 +383,10 @@
   function requestOpenProject() {
     requestDocumentReplacement({ run: () => openFileDialog() });
   }
-  function requestOpenRecent(project) {
+  function requestOpenRecent(project: RecentProjectRecord): void {
     requestDocumentReplacement({ run: () => openRecentProject(project) });
   }
-  async function openRecentProject(project) {
+  async function openRecentProject(project: RecentProjectRecord): Promise<void> {
     try {
       loadJSON(project.contents);
       fileName.set(project.name);
@@ -354,9 +396,9 @@
         fileName: project.name,
         recentId: project.id,
       });
-    } catch (error) {
+    } catch (error: unknown) {
       await forgetRecentProject(project.id);
-      notifyError(`Could not open recent project: ${error.message}`);
+      notifyError(`Could not open recent project: ${errorText(error)}`);
     }
   }
   async function confirmDocumentReplacement() {
@@ -376,13 +418,13 @@
           return request.run();
         },
       });
-    } catch (error) {
-      notifyError(`Could not open project: ${error.message}`);
+    } catch (error: unknown) {
+      notifyError(`Could not open project: ${errorText(error)}`);
     } finally {
       discardBusy = false;
     }
   }
-  function onCopy(e) {
+  function onCopy(e: ClipboardEvent): void {
     if (!recoveryReady || viewportState.blocked || $popupOpen || isEditingTarget(e.target)) return;
     const keyboardContext = getKeyboardContext();
     if (keyboardContext !== 'layers' && keyboardContext !== 'timeline') return;
@@ -396,7 +438,7 @@
     e.preventDefault();
     notifyInfo(`Copied ${copied} clip${copied === 1 ? '' : 's'}.`);
   }
-  async function onPaste(e) {
+  async function onPaste(e: ClipboardEvent): Promise<void> {
     if (!recoveryReady || viewportState.blocked || $popupOpen) return;
     if (isEditingTarget(e.target)) return;
     const intent = clipboardPasteIntent(e.clipboardData, getKeyboardContext());
@@ -408,30 +450,36 @@
           valid: () => isProjectRevisionCurrent(revision),
         });
         if (isProjectRevisionCurrent(revision) && clipboardMediaPlacementSucceeded(imported)) {
+          activeTool.set('move');
           notifyInfo('Pasted image as a reference layer.');
         }
-      } catch (err) {
+      } catch (err: unknown) {
         if (!isProjectRevisionCurrent(revision)) return;
-        notifyError('Could not paste image: ' + err.message);
+        notifyError('Could not paste image: ' + errorText(err));
       }
       return;
     }
     if (intent.kind !== 'clips') return;
     e.preventDefault();
     const pasted = pasteClipsFromClipboard(e.clipboardData);
+    if (!('changed' in pasted) || typeof pasted.changed !== 'boolean') return;
     if (pasted.changed) {
-      notifyInfo(`Pasted ${pasted.clipIds.length} clip${pasted.clipIds.length === 1 ? '' : 's'}.`);
-    } else if (pasted.reason === 'stale-project') {
+      const clipCount = 'clipIds' in pasted && Array.isArray(pasted.clipIds)
+        ? pasted.clipIds.length
+        : 0;
+      notifyInfo(`Pasted ${clipCount} clip${clipCount === 1 ? '' : 's'}.`);
+    } else if ('reason' in pasted && pasted.reason === 'stale-project') {
       notifyInfo('Clipboard clips belong to another project.');
-    } else if (pasted.reason === 'stale-media') {
+    } else if ('reason' in pasted && pasted.reason === 'stale-media') {
       notifyInfo('Clipboard media changed. Copy the clips again.');
-    } else if (pasted.reason === 'stale-fps') {
+    } else if ('reason' in pasted && pasted.reason === 'stale-fps') {
       notifyInfo('Project frame rate changed. Copy the clips again.');
     }
   }
 
-  function onKey(e) {
+  function onKey(e: KeyboardEvent): void {
     if (viewportState.blocked) {
+      if (nativeBrowserZoomShortcut(e)) return;
       e.preventDefault();
       e.stopImmediatePropagation();
       return;
@@ -455,11 +503,24 @@
       return;
     }
     if (modalOpen) return;
-    const committedEditorControl = e.target?.matches?.(
+    const committedEditorControl = e.target instanceof Element && e.target.matches(
       'select, .number-field[data-dirty="false"]',
     );
+    const policyTarget = e.target instanceof Element ? {
+      closest: (selector: string): { type?: string } | null => {
+        const closest = e.target instanceof Element ? e.target.closest(selector) : null;
+        return closest instanceof HTMLInputElement ? { type: closest.type } : closest ? {} : null;
+      },
+    } : null;
+    const shortcutEvent = {
+      key: e.key,
+      ctrlKey: e.ctrlKey,
+      metaKey: e.metaKey,
+      shiftKey: e.shiftKey,
+      target: policyTarget,
+    };
 
-    const saveAction = projectSaveShortcutAction(e, {
+    const saveAction = projectSaveShortcutAction(shortcutEvent, {
       typing,
       popupOpen: modalOpen,
       playing: get(playing),
@@ -468,11 +529,11 @@
       e.preventDefault();
       e.stopImmediatePropagation();
       Promise.resolve(saveAction === 'save-as' ? saveJSONAs() : saveJSON())
-        .catch((error) => notifyError(`Could not save project: ${error.message}`));
+        .catch((error: unknown) => notifyError(`Could not save project: ${errorText(error)}`));
       return;
     }
 
-    if (layerRenameShortcutAction(e, {
+    if (layerRenameShortcutAction(shortcutEvent, {
       typing,
       popupOpen: modalOpen,
       playing: get(playing),
@@ -484,7 +545,7 @@
       return;
     }
 
-    if (nativeInputOwnsKey(e)) return;
+    if (nativeInputOwnsKey(shortcutEvent)) return;
 
     if (e.key === 'Escape') {
       const action = editorEscapeAction({
@@ -550,13 +611,7 @@
       }
       if (ctrl && e.key.toLowerCase() === 't') {
         e.preventDefault();
-        if (hasSelection()) {
-          activeTool.set('select');
-          beginTransformSelection();
-        } else {
-          activeTool.set('move');
-          beginLayerMove();
-        }
+        activeTool.set('move');
         return;
       }
     }
@@ -569,6 +624,7 @@
 <svelte:window onpointerdowncapture={onWindowPointerDown}
   onpointerupcapture={releasePointerInput} onpointercancelcapture={releasePointerInput}
   onclick={onWindowClick} oncopy={onCopy} onpaste={onPaste}
+  oncontextmenu={preventNativeContextMenu}
   onkeydown={onWindowKeyDown}
   onkeyup={refreshAlt} onblur={onWindowBlur} onresize={measureViewport} />
 
@@ -637,13 +693,13 @@
 </div>
 
 {#if viewportState.blocked}
-  <section class="viewport-blocker" role="alertdialog" aria-modal="true"
+  <div class="viewport-blocker" role="alertdialog" aria-modal="true"
     aria-labelledby="unsupported-viewport-title" aria-describedby="unsupported-viewport-size"
     tabindex="-1" use:popupFocus={{ initialFocus: (node) => node, restoreFocus: false }}>
     <h1 id="unsupported-viewport-title">Unsupported viewport</h1>
     <p id="unsupported-viewport-size">Current: {viewportState.width} × {viewportState.height}</p>
     <p>Minimum: {viewportState.minimumWidth} × {viewportState.minimumHeight}</p>
-  </section>
+  </div>
 {/if}
 
 {#if $notifications.length}
@@ -736,7 +792,7 @@
     height: 100vh; position: relative;
   }
   .right {
-    grid-area: right; background: var(--panel);
+    grid-area: right; position: relative; z-index: 0; background: var(--panel);
     /* The panel owns the complete resize gutter, so controls and workspace hits never share it. */
     display: grid; grid-template-columns: var(--right-panel-gutter-w) minmax(0, 1fr); overflow: hidden;
     container-type: inline-size;
@@ -745,7 +801,7 @@
     grid-column: 2; grid-row: 1; min-width: 0;
     display: flex; flex-direction: column; overflow: hidden;
   }
-  .panel-resizer { padding: 0; border: 0; z-index: 68; background: transparent; }
+  .panel-resizer { padding: 0; border: 0; z-index: var(--z-resize-handle); background: transparent; }
   .panel-resizer:focus { outline: none; }
   .right-resizer {
     position: relative; grid-column: 1; grid-row: 1; width: 100%; height: 100%; cursor: col-resize;
@@ -763,13 +819,13 @@
   .sect { flex-shrink: 0; overflow: hidden; }
   .dimmed-section { opacity: 0.42; }
   .viewport-blocker {
-    position: fixed; inset: 0; z-index: 1000; display: grid; place-content: center; gap: 8px;
+    position: fixed; inset: 0; z-index: var(--z-viewport-blocker); display: grid; place-content: center; gap: 8px;
     background: var(--bg); color: var(--text); text-align: left;
   }
   .viewport-blocker h1 { font-size: 16px; font-weight: 600; }
   .viewport-blocker p { color: var(--text-dim); font: 12px var(--font-mono); }
   .warning-stack {
-    position: absolute; z-index: 67;
+    position: absolute; z-index: calc(var(--z-resize-handle) - 1);
     left: calc(var(--tools-w) + 8px); top: calc(var(--menubar-h) + var(--optbar-h) + 8px);
     display: flex; flex-direction: column; align-items: flex-start; gap: 4px;
   }
@@ -789,7 +845,7 @@
     background: var(--panel-hi); color: var(--text);
   }
   .notification-stack {
-    position: fixed; z-index: 120; top: calc(var(--menubar-h) + 8px); right: 10px;
+    position: fixed; z-index: var(--z-notification); top: calc(var(--menubar-h) + 8px); right: 10px;
     width: min(360px, calc(100vw - 20px)); display: flex; flex-direction: column; gap: 6px;
     pointer-events: none;
   }

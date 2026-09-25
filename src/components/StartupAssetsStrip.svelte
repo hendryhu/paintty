@@ -1,17 +1,15 @@
-<script>
+<script lang="ts">
   import {
     retryStartupAssets,
     startupAssets,
     startupProgressState,
   } from '../lib/startupAssets.js';
 
-  /**
-   * @typedef {Object} Props
-   * @property {boolean} [recoveryReady]
-   */
+  interface Props {
+    recoveryReady?: boolean;
+  }
 
-  /** @type {Props} */
-  let { recoveryReady = false } = $props();
+  let { recoveryReady = false }: Props = $props();
 
   let progress = $derived(startupProgressState(recoveryReady, $startupAssets));
   let failedTasks = $derived($startupAssets.tasks.filter((task) => task.status === 'failed'));

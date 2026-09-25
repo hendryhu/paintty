@@ -1,29 +1,19 @@
-<script>
+<script lang="ts">
   import Icon from './Icon.svelte';
   import { untrack } from 'svelte';
   import { oklchToHex, maxChroma, oklchInGamut } from '../lib/color.js';
   import {
-    pickerStateFromHex, pickerStateFromOklch,
+    PICKER_MAX_CHROMA, pickerStateFromHex, pickerStateFromOklch, pickerStateWithFixedChroma,
     setPickerLightness, setPickerChroma, setPickerHue,
   } from '../lib/colorPickerState.js';
   import NumberField from './NumberField.svelte';
   import { isTopPopup, popupFocus } from '../lib/popupFocus.js';
+  import type { ColorPickerState } from '../lib/colorPickerState.js';
+  import type {
+    ColorPickerProps,
+    NumberFieldDetail,
+  } from '../lib/types/canvas-components.js';
 
-  /**
-   * @typedef {Object} Props
-   * @property {string} [value]
-   * @property {any} [recent]
-   * @property {number} [x]
-   * @property {number} [y]
-   * @property {boolean} [showEyedropper]
-   * @property {(hex: string) => void} [onChange]
-   * @property {(hex: string) => void} [onCommit]
-   * @property {() => void} [onGestureCancel]
-   * @property {() => void} [onEyedropper]
-   * @property {() => void} [onClose]
-   */
-
-  /** @type {Props} */
   let {
     value = '#ffffff',
     recent = [],
@@ -35,21 +25,21 @@
     onGestureCancel = () => {},
     onEyedropper = () => {},
     onClose = () => {},
-  } = $props();
+  }: ColorPickerProps = $props();
 
   const SIZE = 200, R = SIZE / 2;
   const N = 120;
-  const C_AXIS = 0.4;
+  const C_AXIS = PICKER_MAX_CHROMA;
 
-  let mode = $state('wheel');
-  let pickerEl = $state();
+  let mode = $state<'wheel' | 'lc' | 'hl'>('wheel');
+  let pickerEl = $state<HTMLDivElement | null>(null);
 
   const initialValue = untrack(() => value);
-  let pickerState = $state(pickerStateFromHex(initialValue));
-  let observedValue = $state(initialValue);
-  let L = $derived(pickerState.L);
-  let C = $derived(pickerState.C);
-  let Hue = $derived(pickerState.H);
+  let pickerState = $state<ColorPickerState>(pickerStateFromHex(initialValue));
+  let observedValue = $state<string>(initialValue);
+  let L = $derived<number>(pickerState.L);
+  let C = $derived<number>(pickerState.C);
+  let Hue = $derived<number>(pickerState.H);
   $effect(() => {
     if (value !== observedValue) {
       observedValue = value;
@@ -57,19 +47,20 @@
       if (next.hex !== pickerState.hex) pickerState = next;
     }
   });
-  let lightnessValue = $derived(Math.round(L * 1000) / 10);
-  let chromaValue = $derived(Math.round(C * 1000) / 1000);
-  let hueValue = $derived(Math.round(Hue));
+  let lightnessValue = $derived<number>(Math.round(L * 1000) / 10);
+  let chromaValue = $derived<number>(Math.round(C * 1000) / 1000);
+  let hueValue = $derived<number>(Math.round(Hue));
 
-  let wheelEl = $state(), drawnKey = '';
+  let wheelEl = $state<HTMLCanvasElement | null>(null);
+  let drawnKey: string = '';
 
-  function fieldDrawKey() {
+  function fieldDrawKey(): string {
     if (mode === 'wheel') return mode + ':' + Math.round(L * 100);
     if (mode === 'lc') return mode + ':' + Math.round(Hue);
     return mode + ':' + Math.round(C * 1000);
   }
 
-  function fieldColor(i, j) {
+  function fieldColor(i: number, j: number): string | null {
     if (mode === 'wheel') {
       const dx = i - N / 2;
       const dy = j - N / 2;
@@ -93,7 +84,7 @@
       : null;
   }
 
-  function writePixel(data, index, hex) {
+  function writePixel(data: Uint8ClampedArray, index: number, hex: string | null): void {
     if (!hex) {
       data[index + 3] = 0;
       return;
@@ -105,7 +96,7 @@
     data[index + 3] = 255;
   }
 
-  function putField() {
+  function putField(): void {
     if (!wheelEl) return;
     const key = fieldDrawKey();
     if (key === drawnKey) return;
@@ -113,6 +104,7 @@
     wheelEl.width = N;
     wheelEl.height = N;
     const ctx = wheelEl.getContext('2d');
+    if (!ctx) return;
     const image = ctx.createImageData(N, N);
     for (let j = 0; j < N; j++) {
       for (let i = 0; i < N; i++) {
@@ -127,101 +119,105 @@
     putField();
   });
 
-  let markX = $derived(mode === 'wheel'
+  let markX = $derived<number>(mode === 'wheel'
       ? R + Math.cos(Hue * Math.PI / 180) * (maxChroma(L, Hue) > 0 ? Math.min(1, C / maxChroma(L, Hue)) * R : 0)
       : mode === 'lc' ? L * SIZE : (Hue / 360) * SIZE);
-  let markY = $derived(mode === 'wheel'
+  let markY = $derived<number>(mode === 'wheel'
       ? R + Math.sin(Hue * Math.PI / 180) * (maxChroma(L, Hue) > 0 ? Math.min(1, C / maxChroma(L, Hue)) * R : 0)
       : mode === 'lc' ? (1 - Math.min(1, C / C_AXIS)) * SIZE : (1 - L) * SIZE);
 
-  let pointerId = null;
-  let pendingColor = null;
-  let scalarSource = null;
-  function emit(hex, commit = false) {
+  let pointerId: number | null = null;
+  let pendingColor: string | null = null;
+  let scalarSource: 'number' | 'range' | null = null;
+  function emit(hex: string, commit = false): void {
     onChange(hex);
     if (commit) onCommit(hex);
   }
-  function preview(next) {
+  function preview(next: ColorPickerState): void {
     pickerState = next;
     pendingColor = next.hex;
     emit(next.hex);
   }
-  function pick(e) {
+  function pick(event: PointerEvent): void {
+    if (!wheelEl) return;
     const r = wheelEl.getBoundingClientRect();
     if (mode === 'wheel') {
-      const dx = e.clientX - r.left - R, dy = e.clientY - r.top - R;
+      const dx = event.clientX - r.left - R, dy = event.clientY - r.top - R;
       let hue = Math.atan2(dy, dx) * 180 / Math.PI; if (hue < 0) hue += 360;
       const frac = Math.min(1, Math.hypot(dx, dy) / R);
       preview(pickerStateFromOklch(L, frac * maxChroma(L, hue), hue));
     } else {
-      const fx = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width));
-      const fy = Math.min(1, Math.max(0, (e.clientY - r.top) / r.height));
+      const fx = Math.min(1, Math.max(0, (event.clientX - r.left) / r.width));
+      const fy = Math.min(1, Math.max(0, (event.clientY - r.top) / r.height));
       // Clamp chroma before RGB conversion so the chosen hue stays stable.
       if (mode === 'lc') {
         const Lv = fx, Cv = Math.min((1 - fy) * C_AXIS, maxChroma(fx, Hue));
         preview(pickerStateFromOklch(Lv, Cv, Hue));
       } else {
         const Lv = 1 - fy, Hv = fx * 360;
-        preview(pickerStateFromOklch(Lv, Math.min(C, maxChroma(Lv, Hv)), Hv));
+        preview(pickerStateWithFixedChroma(Lv, C, Hv));
       }
     }
   }
-  function down(e) {
-    if (pointerId !== null || e.button !== 0 || e.isPrimary === false) return;
-    pointerId = e.pointerId;
+  function down(event: PointerEvent & { currentTarget: HTMLCanvasElement }): void {
+    if (pointerId !== null || event.button !== 0 || event.isPrimary === false) return;
+    pointerId = event.pointerId;
     pendingColor = null;
-    e.preventDefault();
-    e.currentTarget.setPointerCapture?.(pointerId);
-    pick(e);
+    event.preventDefault();
+    event.currentTarget.setPointerCapture?.(pointerId);
+    pick(event);
   }
-  function move(e) {
-    if (pointerId === e.pointerId) pick(e);
+  function move(event: PointerEvent): void {
+    if (pointerId === event.pointerId) pick(event);
   }
-  function up(e) {
-    if (pointerId !== e.pointerId) return;
+  function up(event: PointerEvent): void {
+    if (pointerId !== event.pointerId) return;
     const color = pendingColor;
     pointerId = null;
     pendingColor = null;
     if (color) onCommit(color);
   }
-  function cancelGesture(e) {
-    if (e?.pointerId != null && pointerId !== e.pointerId) return;
+  function cancelGesture(event: PointerEvent | FocusEvent): void {
+    const eventPointerId = 'pointerId' in event && typeof event.pointerId === 'number'
+      ? event.pointerId
+      : null;
+    if (eventPointerId != null && pointerId !== eventPointerId) return;
     const active = pointerId !== null;
     pointerId = null;
     pendingColor = null;
     if (active) onGestureCancel();
   }
 
-  function beginScalar(source) { scalarSource ||= source; }
-  function updateL(next, source) { beginScalar(source); preview(setPickerLightness(pickerState, next)); }
-  function updateC(next, source) { beginScalar(source); preview(setPickerChroma(pickerState, next)); }
-  function updateHue(next, source) { beginScalar(source); preview(setPickerHue(pickerState, next)); }
-  function commitPreview() {
+  function beginScalar(source: 'number' | 'range'): void { scalarSource ||= source; }
+  function updateL(next: number, source: 'number' | 'range'): void { beginScalar(source); preview(setPickerLightness(pickerState, next)); }
+  function updateC(next: number, source: 'number' | 'range'): void { beginScalar(source); preview(setPickerChroma(pickerState, next)); }
+  function updateHue(next: number, source: 'number' | 'range'): void { beginScalar(source); preview(setPickerHue(pickerState, next)); }
+  function commitPreview(): void {
     scalarSource = null;
     onCommit(pickerState.hex);
   }
-  function cancelNumberScrub() {
+  function cancelNumberScrub(): void {
     if (scalarSource === 'number') scalarSource = null;
   }
-  function cancelRangeGesture() {
+  function cancelRangeGesture(): void {
     if (scalarSource !== 'range') return;
     scalarSource = null;
     onGestureCancel();
   }
-  function cancelWindowGesture(event) {
+  function cancelWindowGesture(event: PointerEvent | FocusEvent): void {
     cancelGesture(event);
     cancelRangeGesture();
   }
-  function numberValue(detail) { return Number(detail.value); }
-  function sliderValue(event) { return Number(event.currentTarget.value); }
-  function previewHex(event) {
+  function numberValue(detail: NumberFieldDetail): number { return Number(detail.value); }
+  function sliderValue(event: Event & { currentTarget: HTMLInputElement }): number { return Number(event.currentTarget.value); }
+  function previewHex(event: Event & { currentTarget: HTMLInputElement }): void {
     let hex = event.currentTarget.value.trim();
     if (!hex.startsWith('#')) hex = '#' + hex;
     if (!/^#[0-9a-f]{6}$/i.test(hex)) return;
     pickerState = pickerStateFromHex(hex);
     emit(pickerState.hex);
   }
-  function setHex(event) {
+  function setHex(event: Event & { currentTarget: HTMLInputElement }): void {
     let hex = event.currentTarget.value.trim();
     if (!hex.startsWith('#')) hex = '#' + hex;
     if (/^#[0-9a-f]{6}$/i.test(hex)) {
@@ -229,19 +225,20 @@
       emit(pickerState.hex, true);
     } else event.currentTarget.value = pickerState.hex;
   }
-  function onHexKeyDown(event) {
+  function onHexKeyDown(event: KeyboardEvent & { currentTarget: HTMLInputElement }): void {
     if (event.key !== 'Enter') return;
     event.preventDefault();
     setHex(event);
     event.currentTarget.select();
   }
-  function chooseRecent(color) {
+  function chooseRecent(color: string): void {
     pickerState = pickerStateFromHex(color);
     emit(pickerState.hex, true);
   }
-  function onKey(event) {
+  function onKey(event: KeyboardEvent): void {
+    const target = event.target instanceof Element ? event.target : null;
     if (event.key !== 'Escape' || !isTopPopup(pickerEl) ||
-      event.target.closest?.('.number-field[data-dirty="true"]')) return;
+      target?.closest('.number-field[data-dirty="true"]')) return;
     event.preventDefault();
     event.stopImmediatePropagation();
     onClose();
@@ -254,12 +251,14 @@
 <div class="picker" role="dialog" aria-label="Color picker" tabindex="-1"
   bind:this={pickerEl} use:popupFocus={{ initialFocus: '.modes button' }} style="left: {x}px; top: {y}px;">
   <div class="picker-main">
+    <!-- The field mode controls which OKLCH axes the canvas exposes. -->
     <div class="modes">
       <button class:on={mode === 'wheel'} onclick={() => mode = 'wheel'} title="Hue and chroma">Wheel</button>
       <button class:on={mode === 'lc'} onclick={() => mode = 'lc'} title="Lightness and chroma">Fix H</button>
       <button class:on={mode === 'hl'} onclick={() => mode = 'hl'} title="Hue and lightness">Fix C</button>
     </div>
 
+    <!-- The canvas and marker always render the active mode's two axes. -->
     <div class="wheel-wrap" style="width: {SIZE}px; height: {SIZE}px;">
       <canvas bind:this={wheelEl} class="wheel" class:square={mode !== 'wheel'}
         onpointerdown={down} onlostpointercapture={cancelGesture}></canvas>
@@ -276,7 +275,7 @@
           oninput={(event) => updateL(sliderValue(event), 'range')}
           onchange={commitPreview} />
         <NumberField ariaLabel="OKLCH lightness" min={0} max={100} step={0.5}
-          value={lightnessValue} onInput={(detail) => updateL(numberValue(detail), 'number')}
+          value={lightnessValue} onInput={(detail: NumberFieldDetail) => updateL(numberValue(detail), 'number')}
           onChange={commitPreview} onScrubCancel={cancelNumberScrub} />
         <span class="unit">%</span>
       </div>
@@ -290,7 +289,7 @@
           oninput={(event) => updateHue(sliderValue(event), 'range')}
           onchange={commitPreview} />
         <NumberField ariaLabel="OKLCH hue" min={0} max={360} step={1}
-          value={hueValue} onInput={(detail) => updateHue(numberValue(detail), 'number')}
+          value={hueValue} onInput={(detail: NumberFieldDetail) => updateHue(numberValue(detail), 'number')}
           onChange={commitPreview} onScrubCancel={cancelNumberScrub} />
         <span class="unit">°</span>
       </div>
@@ -304,7 +303,7 @@
           oninput={(event) => updateC(sliderValue(event), 'range')}
           onchange={commitPreview} />
         <NumberField ariaLabel="OKLCH chroma" min={0} max={C_AXIS} step={0.002}
-          value={chromaValue} onInput={(detail) => updateC(numberValue(detail), 'number')}
+          value={chromaValue} onInput={(detail: NumberFieldDetail) => updateC(numberValue(detail), 'number')}
           onChange={commitPreview} onScrubCancel={cancelNumberScrub} />
         <span class="unit"></span>
       </div>
@@ -322,6 +321,7 @@
     </div>
   </div>
 
+  <!-- Recent colors remain available without changing the active picker mode. -->
   <div class="recent-panel">
     <div class="recent-label">Recent</div>
     <div class="recent-grid">

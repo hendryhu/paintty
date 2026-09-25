@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   import { onMount, tick } from 'svelte';
   import { authoredRevision } from '../lib/grid.js';
   import {
@@ -16,32 +16,33 @@
   import { playing } from '../lib/frames.js';
   import { get } from 'svelte/store';
   import { popupFocus } from '../lib/popupFocus.js';
+  import { errorText } from '../lib/types/project-types.js';
+  import type { MediaAsset, MediaKind, MediaRuntimeStatus } from '../lib/types/media-types.js';
 
-  /**
-   * @typedef {Object} Props
-   * @property {any} [focusAssetId]
-   * @property {() => void} [onClose]
-   */
+  interface Props {
+    focusAssetId?: string | null;
+    onClose?: () => void;
+  }
 
-  /** @type {Props} */
-  let { focusAssetId = null, onClose = () => {} } = $props();
-  let dialog = $state();
-  let fileInput = $state();
-  let pickerAsset = null;
-  let busyAssetId = $state(null);
-  let cachedHashes = $state(new Set());
+  type AssetStatus = 'decode failed' | 'missing' | 'ready';
+
+  let { focusAssetId = null, onClose = () => {} }: Props = $props();
+  let dialog = $state<HTMLDivElement>();
+  let fileInput = $state<HTMLInputElement>();
+  let pickerAsset: MediaAsset | null = null;
+  let busyAssetId = $state<string | null>(null);
+  let cachedHashes = $state<Set<string>>(new Set());
   let cacheGeneration = $state(-1);
 
 
   function close() { onClose(); }
-  function backdropClick(event) { if (event.target === event.currentTarget) close(); }
 
-  function requestImport(kind) {
+  function requestImport(kind: MediaKind): void {
     if ($playing || busyAssetId != null) return;
     window.dispatchEvent(new CustomEvent('import-project-media', { detail: { kind } }));
   }
 
-  async function refreshCache(generation) {
+  async function refreshCache(generation: number): Promise<void> {
     cacheGeneration = generation;
     try {
       const records = await listProjectAssets();
@@ -51,18 +52,23 @@
     }
   }
 
-  function assetStatus(asset, statuses, hashes) {
+  function assetStatus(
+    asset: MediaAsset,
+    statuses: ReadonlyMap<string, MediaRuntimeStatus>,
+    hashes: ReadonlySet<string>,
+  ): AssetStatus {
     const runtime = statuses.get(asset.assetId)?.state;
     if (runtime === 'decode-failed') return 'decode failed';
     if (runtime === 'missing' || !hashes.has(asset.hash)) return 'missing';
     return 'ready';
   }
 
-  function acceptFor(kind) {
+  function acceptFor(kind: MediaKind): string {
     return kind === 'image' ? 'image/*' : kind === 'audio' ? 'audio/*' : 'video/*';
   }
 
-  function chooseReplacement(asset) {
+  function chooseReplacement(asset: MediaAsset): void {
+    if (!fileInput) return;
     pickerAsset = asset;
     fileInput.accept = acceptFor(asset.kind);
     fileInput.value = '';
@@ -70,6 +76,7 @@
   }
 
   async function onFile() {
+    if (!fileInput) return;
     const file = fileInput.files?.[0];
     const asset = pickerAsset;
     pickerAsset = null;
@@ -81,40 +88,40 @@
         valid: () => isProjectRevisionCurrent(revision) && !get(playing),
       });
       await refreshCache($projectMediaRegistry.generation);
-    } catch (error) {
-      notifyError(`Could not update media: ${error.message}`);
+    } catch (error: unknown) {
+      notifyError(`Could not update media: ${errorText(error)}`);
     } finally {
       busyAssetId = null;
     }
   }
 
-  async function place(asset) {
+  async function place(asset: MediaAsset): Promise<void> {
     const revision = captureProjectRevision();
     busyAssetId = asset.assetId;
     try {
       await placeMediaAsset(asset.assetId, {
         valid: () => isProjectRevisionCurrent(revision) && !get(playing),
       });
-    } catch (error) {
-      notifyError(`Could not place media: ${error.message}`);
+    } catch (error: unknown) {
+      notifyError(`Could not place media: ${errorText(error)}`);
     } finally {
       busyAssetId = null;
     }
   }
 
-  function details(asset) {
+  function details(asset: MediaAsset): string {
     if (asset.kind === 'image') return `${asset.width}x${asset.height}`;
     if (asset.kind === 'video') return `${asset.width}x${asset.height} / ${asset.duration.toFixed(2)}s`;
     return `${asset.duration.toFixed(2)}s`;
   }
 
-  function sizeLabel(size) {
+  function sizeLabel(size: number): string {
     if (size < 1024) return `${size} B`;
     if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
     return `${(size / 1024 / 1024).toFixed(1)} MB`;
   }
 
-  function onKey(event) {
+  function onKey(event: KeyboardEvent) {
     if (event.key !== 'Escape') return;
     event.preventDefault();
     event.stopImmediatePropagation();
@@ -127,7 +134,10 @@
     dialog?.querySelector(`[data-asset-id="${focusAssetId}"]`)?.scrollIntoView({ block: 'center' });
   });
   let registry = $derived($projectMediaRegistry);
-  let usage = $derived(($authoredRevision, currentMediaUsageCounts()));
+  let usage = $derived.by(() => {
+    $authoredRevision;
+    return currentMediaUsageCounts();
+  });
   let rows = $derived(registry.assets.map((asset) => ({
     ...asset,
     usage: usage.get(asset.assetId) || 0,
@@ -140,8 +150,8 @@
 
 <svelte:window onkeydowncapture={onKey} />
 
-<div class="modal-backdrop" onclick={backdropClick} role="presentation">
-  <section class="modal-dialog assets-dialog" role="dialog" aria-modal="true" aria-labelledby="assets-title"
+<div class="modal-backdrop" role="presentation">
+  <div class="modal-dialog assets-dialog" role="dialog" aria-modal="true" aria-labelledby="assets-title"
     tabindex="-1" bind:this={dialog} use:popupFocus={{ initialFocus: '.modal-close' }}>
     <header class="modal-head">
       <span id="assets-title">Project Assets</span>
@@ -181,7 +191,7 @@
       {/if}
     </div>
     <input class="native-picker" type="file" bind:this={fileInput} onchange={onFile} />
-  </section>
+  </div>
 </div>
 
 <style>

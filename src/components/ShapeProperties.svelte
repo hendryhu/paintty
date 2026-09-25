@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   import { onDestroy } from 'svelte';
   import Icon from './Icon.svelte';
   import NumberField from './NumberField.svelte';
@@ -12,6 +12,8 @@
     canAnimateShapePath, shapePathAnimationComponents, setShapePathComponentTrackEnabled,
     setShapePathComponentValue, setShapePathComponentValues,
     toggleShapePathComponentKey,
+    hasShapeMixKey, isShapeMixTrackEnabled, setShapeMixKey, setShapeMixTrackEnabled,
+    toggleShapeMixKey,
   } from '../lib/frames.js';
   import { colorEditSession } from '../lib/colorEditSession.js';
   import {
@@ -42,59 +44,101 @@
     shapePathAggregateMetrics,
   } from '../lib/shapePathEditing.js';
   import { applyShapeGeometryEdit } from '../lib/shapeBodyDrag.js';
+  import type {
+    EditorPoint,
+    EditorShape,
+    EditorShapeAppearance,
+    EditorShapeLayer,
+    EditorShapePath,
+  } from '../lib/types/editor-domain.js';
 
-  let { activeLayer } = $props();
+  interface Props {
+    activeLayer: EditorShapeLayer;
+  }
+
+  interface NumberFieldDetail {
+    value: number;
+    source: 'drag' | 'keyboard' | 'typing';
+  }
+
+  type ShapeAnimationComponent = ReturnType<typeof shapePathAnimationComponents>[number];
+  type ShapePathField = 'cx' | 'cy' | 'h' | 'w' | 'x0' | 'x1' | 'y0' | 'y1';
+  type ShapeAggregateField = 'cx' | 'cy' | 'h' | 'w';
+
+  let { activeLayer }: Props = $props();
 
   const LINE_BOX_STYLE_OPTIONS = BOX_STYLE_OPTIONS.filter((choice) => choice.value !== 'rounded');
   const PICKER_W = 292;
   const PICKER_H = 340;
-  let shapePathScrub = null;
-  let shapeComponentScrubPath = null;
-  let shapePropertyScrubShape = null;
-  let expandedShapeComponents = $state(new Set());
-  let expandedShapeLayerId = $state(null);
+  let shapePathScrub: EditorShapePath | null = null;
+  let shapeComponentScrubPath: EditorShapePath | null = null;
+  let shapePropertyScrubShape: EditorShape | null = null;
+  let expandedShapeComponents = $state<Set<string>>(new Set());
+  let expandedShapeLayerId = $state<string | null>(null);
 
   let shape = $derived(activeLayer?.shape || null);
   let slopeLineLocked = $derived(isSlopeLine(shape));
   let shapeStrokeEditable = $derived(shape &&
     shape.style !== 'filled' && shape.style !== 'special' && shape.style !== 'slope');
-  let shapePathAnimated = $derived(($frames,
-    activeLayer ? isShapePathWholeTrackEnabled(activeLayer.id) : false));
-  let shapePathAnimationAvailable = $derived(($frames,
-    activeLayer ? canAnimateShapePath(activeLayer.id) : false));
+  let shapePathAnimated = $derived.by(() => {
+    $frames;
+    return isShapePathWholeTrackEnabled(activeLayer.id);
+  });
+  let shapePathAnimationAvailable = $derived.by(() => {
+    $frames;
+    return canAnimateShapePath(activeLayer.id);
+  });
   let shapePathUnavailableHint = $derived(shape?.kind === 'polygon'
     ? 'Use one polygon side count across all frames'
     : 'Use one shape type across all frames');
-  let shapePathKeyed = $derived(($frames,
-    activeLayer ? hasShapePathWholeKey(activeLayer.id, $activeFrameIndex) : false));
-  let shapePath = $derived(($frames, $activeFrameIndex,
-    activeLayer ? shapePathAt(activeLayer.id, $activeFrameIndex) : null));
-  let linePathStart = $derived(shapePath?.kind === 'line'
-    ? shapePathComponentValue(shapePath, 'vertex:0')
-    : null);
-  let linePathEnd = $derived(shapePath?.kind === 'line'
-    ? shapePathComponentValue(shapePath, 'vertex:1')
-    : null);
-  let shapeComponents = $derived(($frames, $activeFrameIndex,
-    activeLayer ? shapePathAnimationComponents(activeLayer.id, $activeFrameIndex) : []));
-  let legacyShapePathKeys = $derived(($frames,
-    activeLayer ? shapePathWholeKeys(activeLayer.id) : []));
+  let shapePathKeyed = $derived.by(() => {
+    $frames;
+    return hasShapePathWholeKey(activeLayer.id, $activeFrameIndex);
+  });
+  let shapePath = $derived.by(() => {
+    $frames;
+    $activeFrameIndex;
+    return shapePathAt(activeLayer.id, $activeFrameIndex);
+  });
+  let linePathStart = $derived.by((): EditorPoint | null => {
+    const value = shapePath?.kind === 'line'
+      ? shapePathComponentValue(shapePath, 'vertex:0')
+      : null;
+    return value !== null && typeof value === 'object' ? value : null;
+  });
+  let linePathEnd = $derived.by((): EditorPoint | null => {
+    const value = shapePath?.kind === 'line'
+      ? shapePathComponentValue(shapePath, 'vertex:1')
+      : null;
+    return value !== null && typeof value === 'object' ? value : null;
+  });
+  let shapeComponents = $derived.by(() => {
+    $frames;
+    $activeFrameIndex;
+    return shapePathAnimationComponents(activeLayer.id, $activeFrameIndex);
+  });
+  let legacyShapePathKeys = $derived.by(() => {
+    $frames;
+    return shapePathWholeKeys(activeLayer.id);
+  });
   let shapeGeometryAnimated = $derived(shapePathAnimated ||
     shapeComponents.some((component) => component.enabled));
   let shapeCanFreeTransform = $derived(shape && shape.channel !== 'background' &&
     shape.style !== 'special' && shape.style !== 'slope');
   let shapeDefaultAnchor = $derived(shape
-    ? resolvedShapeAnchor({ ...shape, anchor: null })
+    ? resolvedShapeAnchor({ ...shape, anchor: undefined })
     : null);
-  let shapeHasAdvancedGeometry = $derived(!!shape && (
-    Array.isArray(shape.vertices) ||
-    Math.abs(Number(shape.rotation) || 0) > 1e-9 ||
-    (Number.isFinite(shape.anchor?.x) && Number.isFinite(shape.anchor?.y) &&
-      shapeDefaultAnchor &&
-      (Math.abs(shape.anchor.x - shapeDefaultAnchor.x) > 1e-9 ||
-        Math.abs(shape.anchor.y - shapeDefaultAnchor.y) > 1e-9)) ||
-    shapeComponents.some((component) => component.enabled)
-  ));
+  let shapeHasAdvancedGeometry = $derived.by(() => {
+    if (!shape) return false;
+    const anchor = shape.anchor;
+    const customAnchor = anchor && shapeDefaultAnchor &&
+      Number.isFinite(anchor.x) && Number.isFinite(anchor.y) &&
+      (Math.abs(anchor.x - shapeDefaultAnchor.x) > 1e-9 ||
+        Math.abs(anchor.y - shapeDefaultAnchor.y) > 1e-9);
+    return Array.isArray(shape.vertices) ||
+      Math.abs(Number(shape.rotation) || 0) > 1e-9 ||
+      !!customAnchor || shapeComponents.some((component) => component.enabled);
+  });
   $effect(() => {
     if (activeLayer?.id !== expandedShapeLayerId) {
       expandedShapeLayerId = activeLayer?.id ?? null;
@@ -112,16 +156,29 @@
   let shapeAggregate = $derived(shapePathAggregateMetrics(shapePath));
   let shapeCellDetailSafe = $derived(canConvertShapeDetailToCell(shape, shapeGeometryAnimated));
   let shapeCellDetailBlocked = $derived(shape?.detail !== 'cell' && !shapeCellDetailSafe);
+  let backgroundChannelBlocked = $derived((shapeHasAdvancedGeometry || shapeCellDetailBlocked) &&
+    shape?.channel === 'glyph');
+  let colorClipChannelBlocked = $derived(shapeCellDetailBlocked && shape?.channel === 'glyph');
   let polygonSidesEditable = $derived(shape?.kind === 'polygon' && !shapeGeometryAnimated);
   let polygonSides = $derived(shape?.kind === 'polygon'
     ? Math.max(3, Math.min(64, Math.round(Number(shape.sides) ||
       shape.vertices?.length || 3)))
     : 3);
+  let shapeMixAnimated = $derived.by(() => {
+    $frames;
+    return shape?.channel === 'color-clip' && isShapeMixTrackEnabled(activeLayer.id);
+  });
+  let shapeMixKeyed = $derived.by(() => {
+    $frames;
+    return shape?.channel === 'color-clip' && hasShapeMixKey(activeLayer.id, $activeFrameIndex);
+  });
 
   onDestroy(() => shapeGeometryHover.set(null));
 
-  function pickerAnchor(event) {
-    const rect = event.currentTarget.getBoundingClientRect();
+  function pickerAnchor(event: Event): { x: number; y: number } {
+    const target = event.currentTarget;
+    if (!(target instanceof HTMLElement)) return { x: 4, y: 4 };
+    const rect = target.getBoundingClientRect();
     const maxX = Math.max(4, window.innerWidth - PICKER_W - 4);
     const maxY = Math.max(4, window.innerHeight - PICKER_H - 4);
     let x = rect.left - PICKER_W - 10;
@@ -131,19 +188,19 @@
     return { x, y };
   }
 
-  function openShapePicker(event) {
+  function openShapePicker(event: MouseEvent): void {
     if (!shape) return;
     event.stopPropagation();
     colorEditSession.open({ kind: 'shape', layerId: activeLayer.id }, pickerAnchor(event));
   }
 
-  function normalizedHex(value) {
+  function normalizedHex(value: string): string | null {
     const raw = value.trim();
     const hex = raw.startsWith('#') ? raw : `#${raw}`;
     return /^#[0-9a-f]{6}$/i.test(hex) ? hex.toLowerCase() : null;
   }
 
-  function updateShapePatch(sourcePatch) {
+  function updateShapePatch(sourcePatch: EditorShapeAppearance): void {
     if (!shape) return;
     // Slope glyph pairs and locked angles cannot survive an appearance change.
     if (slopeLineLocked && ['channel', 'style', 'detail', 'boxStyle']
@@ -155,11 +212,11 @@
     const requestedRestricted = requestedChannel === 'background' ||
       requestedStyle === 'special' || requestedStyle === 'slope';
     const requestsWholeCells = sourcePatch.detail === 'cell' ||
-      requestedChannel === 'background' ||
+      requestedChannel !== 'glyph' ||
       requestedStyle === 'special' || requestedStyle === 'slope';
     if (shape.detail !== 'cell' && requestsWholeCells && !shapeCellDetailSafe) return;
     if (shapeHasAdvancedGeometry && !currentlyRestricted && requestedRestricted) return;
-    const next = updateShapeAppearance(shape, sourcePatch);
+    const next = updateShapeAppearance(shape, sourcePatch) as EditorShape;
     if (next.channel === 'glyph' && next.style !== 'special' && next.style !== 'slope' &&
       next.detail === 'cell') {
       next.wide = isWide(next.char);
@@ -175,13 +232,27 @@
     setShapeLayerProperties(activeLayer.id, next, renderShapeToCells);
   }
 
-  function updateShape(key, value) {
+  function updateShape<K extends keyof EditorShapeAppearance>(
+    key: K,
+    value: EditorShapeAppearance[K],
+  ): void {
     updateShapePatch({ [key]: value });
   }
 
-  function updateShapeNumber(key, detail, min, max) {
+  function updateShapeNumber(
+    key: 'thickness',
+    detail: NumberFieldDetail,
+    min: number,
+    max: number,
+  ): void {
     const value = Math.max(min, Math.min(max, Math.round(Number(detail.value) || min)));
     updateShape(key, value);
+  }
+
+  function updateShapeMix(detail: NumberFieldDetail): void {
+    const value = Math.max(0, Math.min(1, Number(detail.value) / 100));
+    if (shapeMixAnimated) setShapeMixKey(activeLayer.id, $activeFrameIndex, value);
+    else updateShape('mix', value);
   }
 
   function beginShapePropertyScrub() {
@@ -189,7 +260,7 @@
     beginStroke();
   }
 
-  function finishShapePropertyScrub(detail) {
+  function finishShapePropertyScrub(detail: NumberFieldDetail): void {
     if (detail.source !== 'drag') return;
     shapePropertyScrubShape = null;
     endStroke();
@@ -200,11 +271,12 @@
     cancelStroke();
   }
 
-  function updateLineStyle(event) {
-    updateShapePatch(lineStylePatch(event.currentTarget.value));
+  function updateLineStyle(event: Event): void {
+    const select = event.currentTarget;
+    if (select instanceof HTMLSelectElement) updateShapePatch(lineStylePatch(select.value));
   }
 
-  function updatePolygonSides(detail) {
+  function updatePolygonSides(detail: NumberFieldDetail): void {
     if (!shape || !activeLayer || !polygonSidesEditable) return;
     const sides = Math.max(3, Math.min(64,
       Math.round(Number(detail.value) || 3)));
@@ -216,7 +288,7 @@
     setShapePathById($activeFrameIndex, activeLayer.id, pathValueFromShape(edited));
   }
 
-  function updateShapePathValue(key, detail) {
+  function updateShapePathValue(key: ShapePathField, detail: NumberFieldDetail): void {
     if (!shape || !shapePath || !activeLayer) return;
     const dragging = detail.source === 'drag';
     if (!dragging) beginStroke();
@@ -236,7 +308,7 @@
     }
   }
 
-  function applyPanelShapePathEdit(nextPath) {
+  function applyPanelShapePathEdit(nextPath: EditorShapePath | null): boolean {
     if (!nextPath || !activeLayer || !shape || !shapePath) return false;
     const currentShape = shapeForStaticPathEdit(shape, shapePath);
     const nextShape = shapeForStaticPathEdit(shape, nextPath);
@@ -267,7 +339,7 @@
     );
   }
 
-  function updateShapeAggregateValue(key, detail) {
+  function updateShapeAggregateValue(key: ShapeAggregateField, detail: NumberFieldDetail): void {
     if (!shape || !shapePath || !shapeAggregate || !activeLayer) return;
     const dragging = detail.source === 'drag';
     if (!dragging) beginStroke();
@@ -292,7 +364,7 @@
     beginStroke();
   }
 
-  function finishShapePathScrub(detail) {
+  function finishShapePathScrub(detail: NumberFieldDetail): void {
     if (detail.source !== 'drag') return;
     shapePathScrub = null;
     endStroke();
@@ -303,20 +375,20 @@
     cancelStroke();
   }
 
-  function toggleShapeComponentExpanded(componentId) {
+  function toggleShapeComponentExpanded(componentId: string): void {
     const next = new Set(expandedShapeComponents);
     if (next.has(componentId)) next.delete(componentId);
     else next.add(componentId);
     expandedShapeComponents = next;
   }
 
-  function hoverShapeComponent(componentId) {
-    shapeGeometryHover.set(componentId && activeLayer
+  function hoverShapeComponent(componentId: string | null): void {
+    shapeGeometryHover.set(componentId
       ? { layerId: activeLayer.id, componentId }
       : null);
   }
 
-  function componentLabel(component) {
+  function componentLabel(component: ShapeAnimationComponent): string {
     if (shape?.kind === 'line' && component.type === 'vertex') {
       return component.index === 0 ? 'Start' : 'End';
     }
@@ -328,15 +400,25 @@
     beginStroke();
   }
 
-  function updateShapeComponentValue(component, field, detail) {
+  function updateShapeComponentValue(
+    component: ShapeAnimationComponent,
+    field: 'x' | 'y' | null,
+    detail: NumberFieldDetail,
+  ): void {
     if (!activeLayer || !shape || !shapePath) return;
     const dragging = detail.source === 'drag';
     if (!dragging) beginStroke();
-    const value = component.type === 'rotation'
-      ? detail.value
-      : { ...component.value, [field]: detail.value };
+    let value: number | EditorPoint;
+    if (component.type === 'rotation') {
+      value = detail.value;
+    } else {
+      const point = component.value;
+      if (point === null || typeof point !== 'object' || field === null) return;
+      value = { ...point, [field]: detail.value };
+    }
     let changed;
     if (component.type === 'anchor') {
+      if (typeof value === 'number') return;
       // Route through the transform path so a rotated shape stays fixed as its anchor moves.
       const sourcePath = dragging && shapeComponentScrubPath
         ? shapeComponentScrubPath
@@ -365,7 +447,7 @@
     }
   }
 
-  function finishShapeComponentScrub(detail) {
+  function finishShapeComponentScrub(detail: NumberFieldDetail): void {
     if (detail.source !== 'drag') return;
     shapeComponentScrubPath = null;
     endStroke();
@@ -376,15 +458,16 @@
     cancelStroke();
   }
 
-  function authoredPrecision(value) {
+  function authoredPrecision(value: number): number {
     if (Math.abs(value - Math.round(value)) < 1e-9) return 0;
     if (Math.abs(value * 2 - Math.round(value * 2)) < 1e-9) return 1;
     if (Math.abs(value * 4 - Math.round(value * 4)) < 1e-9) return 2;
     return 3;
   }
 
-  function shapeCoordinatePrecision(component) {
+  function shapeCoordinatePrecision(component: ShapeAnimationComponent): number {
     if (component.type === 'rotation') return 1;
+    if (component.value === null || typeof component.value !== 'object') return 0;
     return Math.max(
       authoredPrecision(component.value.x),
       authoredPrecision(component.value.y),
@@ -392,8 +475,10 @@
     );
   }
 
-  function updateColor(event) {
-    const value = normalizedHex(event.currentTarget.value);
+  function updateColor(event: Event): void {
+    const input = event.currentTarget;
+    if (!(input instanceof HTMLInputElement)) return;
+    const value = normalizedHex(input.value);
     if (!value) return;
     const target = $colorEditSession.target;
     if (target?.kind !== 'shape' || target.layerId !== activeLayer?.id) {
@@ -406,9 +491,44 @@
     colorEditSession.commit(value);
   }
 
-  function resetInvalidShapeColor(event) {
-    if (!normalizedHex(event.currentTarget.value)) {
-      event.currentTarget.value = shape?.fg || '#ffffff';
+  function resetInvalidShapeColor(event: Event): void {
+    const input = event.currentTarget;
+    if (!(input instanceof HTMLInputElement)) return;
+    if (!normalizedHex(input.value)) {
+      input.value = shape?.fg || '#ffffff';
+    }
+  }
+
+  function updateShapeChannel(event: Event): void {
+    const select = event.currentTarget;
+    if (!(select instanceof HTMLSelectElement)) return;
+    if (select.value === 'glyph' || select.value === 'background' || select.value === 'color-clip') {
+      updateShape('channel', select.value);
+    }
+  }
+
+  function updateShapeStyle(event: Event): void {
+    const select = event.currentTarget;
+    if (!(select instanceof HTMLSelectElement)) return;
+    if (select.value === 'outline' || select.value === 'filled' ||
+      select.value === 'special' || select.value === 'slope') {
+      updateShape('style', select.value);
+    }
+  }
+
+  function updateShapeDetail(event: Event): void {
+    const select = event.currentTarget;
+    if (!(select instanceof HTMLSelectElement)) return;
+    if (select.value === 'cell' || select.value === 'half' || select.value === 'quarter') {
+      updateShape('detail', select.value);
+    }
+  }
+
+  function updateStrokeAlign(event: Event): void {
+    const select = event.currentTarget;
+    if (!(select instanceof HTMLSelectElement)) return;
+    if (select.value === 'center' || select.value === 'inside' || select.value === 'outside') {
+      updateShape('strokeAlign', select.value);
     }
   }
 </script>
@@ -568,7 +688,7 @@
             </button>
           </div>
           {#if expandedShapeComponents.has(component.id)}
-            {#if component.type === 'rotation'}
+            {#if component.type === 'rotation' && typeof component.value === 'number'}
               <div class="row shape-coordinate-row component-values">
                 <span>Degrees</span>
                 <span class="number-value compact">
@@ -580,7 +700,7 @@
                     onScrubCancel={cancelShapeComponentScrub} />
                 </span>
               </div>
-            {:else}
+            {:else if component.value !== null && typeof component.value === 'object'}
               <div class="row shape-coordinate-row component-values">
                 <span>Position</span>
                 <span class="number-value compact">
@@ -610,7 +730,7 @@
       {/each}
     </div>
   {:else if shapePath}
-    {#if shape.kind === 'line'}
+    {#if shapePath.kind === 'line' && linePathStart && linePathEnd}
       <div class="row shape-coordinate-row">
         <span>Start</span>
         <span class="number-value compact">
@@ -649,7 +769,7 @@
             onChange={finishShapePathScrub} onScrubCancel={cancelShapePathScrub} />
         </span>
       </div>
-    {:else}
+    {:else if shapePath.kind === 'rect' || shapePath.kind === 'circle'}
       <div class="row shape-coordinate-row">
         <span>Center</span>
         <span class="number-value compact">
@@ -695,11 +815,10 @@
     <label class="row">
       <span>Channel</span>
       <select value={shape.channel || 'glyph'} disabled={slopeLineLocked}
-        onchange={(event) => updateShape('channel', event.currentTarget.value)}>
+        onchange={updateShapeChannel}>
         <option value="glyph">Glyph</option>
-        <option value="background"
-          disabled={(shapeHasAdvancedGeometry || shapeCellDetailBlocked) &&
-            shape.channel !== 'background'}>Background</option>
+        <option value="background" disabled={backgroundChannelBlocked}>Background</option>
+        <option value="color-clip" disabled={colorClipChannelBlocked}>Colour Clip</option>
       </select>
     </label>
   {/if}
@@ -724,10 +843,10 @@
   {#if shape.kind === 'rect' || shape.kind === 'circle' || shape.kind === 'polygon'}
     <label class="row">
       <span>Style</span>
-      <select value={shape.style || 'outline'} onchange={(event) => updateShape('style', event.currentTarget.value)}>
+      <select value={shape.style || 'outline'} onchange={updateShapeStyle}>
         <option value="outline">Outline</option>
         <option value="filled">Filled</option>
-        {#if shape.kind !== 'polygon' && shape.channel !== 'background'}
+        {#if shape.kind !== 'polygon' && shape.channel === 'glyph'}
           <option value="special"
             disabled={(shapeHasAdvancedGeometry || shapeCellDetailBlocked) &&
               shape.style !== 'special'}>Special</option>
@@ -736,7 +855,7 @@
     </label>
   {/if}
 
-  {#if shape.kind === 'line' && shape.channel !== 'background'}
+  {#if shape.kind === 'line' && shape.channel === 'glyph'}
     <label class="row">
       <span>Style</span>
       <select class="shape-glyph-select" value={lineStyleValue(shape)}
@@ -758,7 +877,7 @@
     </label>
   {/if}
 
-  {#if (shape.kind === 'rect' || shape.kind === 'circle') && shape.style === 'special' && shape.channel !== 'background'}
+  {#if (shape.kind === 'rect' || shape.kind === 'circle') && shape.style === 'special' && shape.channel === 'glyph'}
     <div class="row">
       <span>Border</span>
       <div class="shape-style-seg">
@@ -771,12 +890,12 @@
     </div>
   {/if}
 
-  {#if shape.channel !== 'background' && shape.kind !== 'line' && shape.style !== 'special'}
+  {#if shape.channel === 'glyph' && shape.kind !== 'line' && shape.style !== 'special'}
     <label class="row">
       <span>Detail</span>
       <select class="shape-glyph-select" value={shape.detail || 'cell'}
         style="font-family: {$canvasFont};"
-        onchange={(event) => updateShape('detail', event.currentTarget.value)}>
+        onchange={updateShapeDetail}>
         <option value="cell" disabled={shapeCellDetailBlocked}>{shape.char}</option>
         <option value="half">▀</option>
         <option value="quarter">▚</option>
@@ -799,7 +918,7 @@
     <label class="row">
       <span>Stroke</span>
       <select value={shape.strokeAlign || 'center'}
-        onchange={(event) => updateShape('strokeAlign', event.currentTarget.value)}>
+        onchange={updateStrokeAlign}>
         <option value="center">Middle</option>
         <option value="inside">Inwards</option>
         <option value="outside">Outwards</option>
@@ -815,23 +934,29 @@
     <button class="swatch shape-color-control" style="background: {shape.fg}"
       onclick={openShapePicker} aria-label="Shape color" title="Choose color"></button>
   </div>
+  {#if shape.channel === 'color-clip'}
+    <div class="row animated-row">
+      <span>Mix</span>
+      <button class:active={shapeMixAnimated} class="track-button"
+        onclick={() => setShapeMixTrackEnabled(activeLayer.id, !shapeMixAnimated)}
+        title={shapeMixAnimated ? 'Disable mix animation' : 'Animate mix'}
+        aria-label={shapeMixAnimated ? 'Disable mix animation' : 'Animate mix'}>
+        <Icon icon="mdi:stopwatch-outline" width="15" />
+      </button>
+      <button class:keyed={shapeMixKeyed} class="key-button" disabled={!shapeMixAnimated}
+        onclick={() => toggleShapeMixKey(activeLayer.id, $activeFrameIndex)}
+        title="Add or remove mix keyframe" aria-label="Add or remove mix keyframe"><span></span></button>
+      <NumberField ariaLabel="Colour Clip shape mix" min={0} max={100} step={1}
+        value={Math.round((shape.mix ?? 1) * 100)}
+        onScrubStart={beginShapePropertyScrub}
+        onInput={updateShapeMix}
+        onChange={finishShapePropertyScrub}
+        onScrubCancel={cancelShapePropertyScrub} />
+    </div>
+  {/if}
 {/if}
 
 <style>
-  :global(.properties.playback-locked) .row { opacity: 0.45; }
-  .row { display: flex; align-items: center; gap: 7px; min-height: 27px; padding: 2px 10px; font-size: 11px; }
-  .row > span:first-child { width: 60px; flex-shrink: 0; color: var(--text-dim); }
-  .row select, .row .hex {
-    min-width: 0; height: 22px; flex: 1; padding: 2px 5px;
-    background: var(--canvas-bg); color: var(--text);
-    border: 1px solid var(--border); border-radius: var(--radius-sm);
-    font: inherit; line-height: 1.2; color-scheme: dark;
-  }
-  .row select:disabled { opacity: 0.4; cursor: not-allowed; }
-  .number-value { display: flex; align-items: center; gap: 3px; margin-left: auto; color: var(--text-dim); }
-  .number-value :global(.number-field) { width: 52px; text-align: right; }
-  .hex { font-family: var(--font-mono); }
-  .swatch { width: 22px; height: 22px; flex-shrink: 0; border: 1px solid var(--border); border-radius: 3px; }
   .shape-style-seg {
     min-width: 0; flex: 1; display: flex;
     border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden;
@@ -844,7 +969,6 @@
   }
   .shape-style-seg button:last-child { border-right: 0; }
   .shape-style-seg button.active { background: var(--accent-dim); color: var(--on-accent); }
-  .hint { padding: 12px 10px; color: var(--text-dim); font-size: 11px; }
   .animated-row > span:first-child { width: 48px; }
   .shape-components { border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
   .shape-component + .shape-component { border-top: 1px solid var(--border); }
@@ -867,20 +991,4 @@
   .shape-coordinate-row .number-value :global(.number-field) {
     min-width: 0; width: 100%;
   }
-  .track-button, .key-button {
-    display: inline-flex; align-items: center; justify-content: center;
-    width: 20px; height: 20px; flex: 0 0 20px; padding: 0;
-    color: var(--text-dim); background: transparent; border-color: transparent;
-  }
-  .track-button.active { color: var(--accent); }
-  .key-button span {
-    width: 8px; height: 8px; border: 1px solid currentColor;
-    transform: rotate(45deg);
-  }
-  .key-button.keyed { color: var(--accent); }
-  .key-button.keyed span { background: currentColor; }
-  .track-button:disabled, .key-button:disabled {
-    opacity: 0.3; color: var(--text-dim);
-  }
-  select:disabled { opacity: 0.4; }
 </style>

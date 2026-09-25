@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   import Icon from './Icon.svelte';
   import { onMount } from 'svelte';
   import ClipTimeline from './ClipTimeline.svelte';
@@ -29,22 +29,29 @@
   } from '../lib/timelineKeys.js';
   import { nativeInputOwnsKey } from '../lib/inputPolicy.js';
 
-  /**
-   * @typedef {Object} Props
-   * @property {boolean} [expanded]
-   * @property {() => void} [onToggle]
-   */
+  interface Props {
+    expanded?: boolean;
+    onToggle?: () => void;
+  }
 
-  /** @type {Props} */
-  let { expanded = false, onToggle = () => {} } = $props();
+  interface ClipTimelineHandle {
+    setZoom(value: number): void;
+    focusTimeline(): void;
+    prepareCollapse(): void;
+    deselectTimeline(): void;
+  }
+
+  type TimelineTool = ReturnType<typeof normalizeTimelineTool>;
+
+  let { expanded = false, onToggle = () => {} }: Props = $props();
   const MIN_ZOOM = 4;
   const MAX_ZOOM = 48;
   const ONION_LABEL = { off: 'Off', layer: 'Layer', all: 'All' };
 
-  let clipTimeline = $state();
+  let clipTimeline = $state<ClipTimelineHandle>();
   let pixelsPerTick = $state(14);
   let showFilmstrip = $state(false);
-  let tool = $state('select');
+  let tool = $state<TimelineTool>('select');
   let trackHeaderWidth = $state(176);
   let settingsLoaded = $state(false);
 
@@ -62,7 +69,7 @@
     settingsLoaded = true;
   });
 
-  function stepTick(delta) {
+  function stepTick(delta: number): void {
     seekTick(Math.max(0, Math.min(
       transportDurationTicks - 1,
       $canonicalPlayheadTick + delta,
@@ -73,13 +80,13 @@
     onionSkin.update((value) => value === 'off' ? 'layer' : value === 'layer' ? 'all' : 'off');
   }
 
-  function setZoom(value) {
+  function setZoom(value: number | string): void {
     const next = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, Number(value) || pixelsPerTick));
     if (clipTimeline) clipTimeline.setZoom(next);
     else pixelsPerTick = next;
   }
 
-  function setTool(value) {
+  function setTool(value: TimelineTool): void {
     tool = normalizeTimelineTool(value);
     clipTimeline?.focusTimeline?.();
   }
@@ -89,8 +96,17 @@
     onToggle();
   }
 
-  function handleHeaderKeydown(event) {
-    if (nativeInputOwnsKey(event)) {
+  function handleHeaderKeydown(event: KeyboardEvent): void {
+    const target = event.target instanceof Element ? event.target : null;
+    if (nativeInputOwnsKey({
+      key: event.key,
+      target: target ? {
+        closest: (selector: string) => {
+          const input = target.closest(selector);
+          return input instanceof HTMLInputElement ? { type: input.type } : null;
+        },
+      } : null,
+    })) {
       event.stopPropagation();
       return;
     }
@@ -120,7 +136,9 @@
     if (zoomShortcut.handled) {
       event.preventDefault();
       event.stopImmediatePropagation();
-      setZoom(zoomShortcut.zoom);
+      if (typeof zoomShortcut.zoom === 'number' || typeof zoomShortcut.zoom === 'string') {
+        setZoom(zoomShortcut.zoom);
+      }
       return;
     }
     const shortcutTool = timelineToolForShortcut(event, {
@@ -190,15 +208,37 @@
     {/if}
 
     <span class="header-spacer"></span>
-    <button class="header-button toggle" class:on={$looping} type="button" data-keyboard-context="neutral"
-      aria-label={`Loop ${$looping ? 'on' : 'off'}`} aria-pressed={$looping}
-      title="Toggle loop" onclick={() => looping.update((value) => !value)}>
-      <Icon icon="material-symbols:repeat" />
-    </button>
+    {#if expanded}
+      <span class="zoom-control" data-keyboard-context="neutral" title="Zoom">
+        <button class="header-button" type="button" aria-label="Zoom out"
+          disabled={pixelsPerTick <= MIN_ZOOM} onclick={() => setZoom(pixelsPerTick - 2)}>
+          <Icon icon="material-symbols:remove" />
+        </button>
+        <input class="zoom-slider" type="range" min={MIN_ZOOM} max={MAX_ZOOM} step="1"
+          value={pixelsPerTick} aria-label="Timeline zoom"
+          oninput={(event) => setZoom(event.currentTarget.value)} />
+        <button class="header-button" type="button" aria-label="Zoom in"
+          disabled={pixelsPerTick >= MAX_ZOOM} onclick={() => setZoom(pixelsPerTick + 2)}>
+          <Icon icon="material-symbols:add" />
+        </button>
+      </span>
+      <span class="header-separator"></span>
+      <button class="header-button toggle" class:on={$looping} type="button" data-keyboard-context="neutral"
+        aria-label={`Loop ${$looping ? 'on' : 'off'}`} aria-pressed={$looping}
+        title="Toggle loop" onclick={() => looping.update((value) => !value)}>
+        <Icon icon="material-symbols:repeat" />
+      </button>
+      <button class="header-button toggle thumbnail-toggle" class:on={showFilmstrip} type="button"
+        data-keyboard-context="neutral"
+        aria-label={`${showFilmstrip ? 'Hide' : 'Show'} frame thumbnails`} aria-pressed={showFilmstrip}
+        title={`${showFilmstrip ? 'Hide' : 'Show'} frame thumbnails`} onclick={() => (showFilmstrip = !showFilmstrip)}>
+        <Icon icon="mdi:filmstrip-box-multiple" />
+      </button>
+    {/if}
     <button class="header-button toggle onion-toggle" class:on={$onionSkin !== 'off'} type="button"
       data-keyboard-context="neutral"
-      data-onion-state={$onionSkin} aria-label={`Onion: ${ONION_LABEL[$onionSkin]}`}
-      title={`Onion: ${ONION_LABEL[$onionSkin]}`} onclick={cycleOnion}>
+      data-onion-state={$onionSkin} aria-label={`Onion: ${ONION_LABEL[$onionSkin as keyof typeof ONION_LABEL]}`}
+      title={`Onion: ${ONION_LABEL[$onionSkin as keyof typeof ONION_LABEL]}`} onclick={cycleOnion}>
       {#if $onionSkin === 'off'}
         <span class="onion-single" data-onion-icon="off"><Icon icon="mdi:ghost-off-outline" /></span>
       {:else if $onionSkin === 'layer'}
@@ -210,30 +250,6 @@
         </span>
       {/if}
     </button>
-    <button class="header-button toggle thumbnail-toggle" class:on={showFilmstrip} type="button"
-      data-keyboard-context="neutral"
-      aria-label={`${showFilmstrip ? 'Hide' : 'Show'} frame thumbnails`} aria-pressed={showFilmstrip}
-      title={`${showFilmstrip ? 'Hide' : 'Show'} frame thumbnails`} onclick={() => (showFilmstrip = !showFilmstrip)}>
-      <Icon icon="mdi:filmstrip-box-multiple" />
-    </button>
-
-    <span class="header-separator"></span>
-    <span class="zoom-control" data-keyboard-context="neutral"
-      title={`Zoom: ${Math.round(pixelsPerTick)} pixels per tick (+/= or -)`}>
-      <button class="header-button" type="button" aria-label="Zoom out"
-        title="Zoom out (-)"
-        disabled={pixelsPerTick <= MIN_ZOOM} onclick={() => setZoom(pixelsPerTick - 2)}>
-        <Icon icon="material-symbols:remove" />
-      </button>
-      <input class="zoom-slider" type="range" min={MIN_ZOOM} max={MAX_ZOOM} step="1"
-        value={pixelsPerTick} aria-label="Timeline zoom"
-        oninput={(event) => setZoom(event.currentTarget.value)} />
-      <button class="header-button" type="button" aria-label="Zoom in"
-        title="Zoom in (+ or =)"
-        disabled={pixelsPerTick >= MAX_ZOOM} onclick={() => setZoom(pixelsPerTick + 2)}>
-        <Icon icon="material-symbols:add" />
-      </button>
-    </span>
   </header>
 
   <div class="timeline-content" aria-hidden={!expanded}>

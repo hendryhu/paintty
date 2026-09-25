@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   import { notifyError } from '../lib/notifications.js';
   import { onDestroy, onMount } from 'svelte';
   import NumberField from './NumberField.svelte';
@@ -24,21 +24,23 @@
     pickExportFileTarget,
     sanitizeExportFilenameDraft,
   } from '../lib/exportDestination.js';
+  import { errorText, type SaveTarget } from '../lib/types/project-types.js';
 
-  /**
-   * @typedef {Object} Props
-   * @property {() => void} [onClose]
-   */
+  interface Props {
+    onClose?: () => void;
+  }
 
-  /** @type {Props} */
-  let { onClose = () => {} } = $props();
+  let { onClose = () => {} }: Props = $props();
   function close() {
     cancel();
     onClose();
   }
 
   const videoFormat = selectVideoExportFormat();
-  const FORMATS = [
+  type ExportFormat = 'png' | 'jpg' | 'video' | 'txt' | 'ansi' | 'animation-json';
+  type ExportPhase = 'rendering' | 'resolving-animation' | 'mixing-audio' | 'encoding-wav' | 'saving' | string;
+
+  const FORMATS: ReadonlyArray<{ id: ExportFormat; label: string; img: boolean }> = [
     { id: 'png', label: 'PNG', img: true },
     { id: 'jpg', label: 'JPG', img: true },
     { id: 'video', label: 'MP4', img: true },
@@ -46,17 +48,17 @@
     { id: 'ansi', label: 'ANSI', img: false },
     { id: 'animation-json', label: 'Animation JSON', img: false },
   ];
-  let format = $state('png');
+  let format = $state<ExportFormat>('png');
   let cellPx = $state(16);
   let busy = $state(false);
   let progress = $state(0);
-  let exportPhase = $state('rendering');
-  let exportController = null;
-  let browseController = null;
+  let exportPhase = $state<ExportPhase>('rendering');
+  let exportController: AbortController | null = null;
+  let browseController: AbortController | null = null;
   let browsing = $state(false);
   let excludeAudio = $state(false);
   let filename = $state('');
-  let retainedTarget = $state(null);
+  let retainedTarget = $state<SaveTarget | null>(null);
   let activeExtension = $state('');
   const browseSupported = exportPickerAvailable();
   let audibleAudioIds = $derived(audibleTimelineAudioAssetIds({
@@ -98,8 +100,10 @@
     filename = normalizeExportFilename(filename, activeExtension, get(fileName));
     return filename;
   }
-  function onNameInput(event) {
-    filename = sanitizeExportFilenameDraft(event.currentTarget.value);
+  function onNameInput(event: Event) {
+    const input = event.currentTarget;
+    if (!(input instanceof HTMLInputElement)) return;
+    filename = sanitizeExportFilenameDraft(input.value);
     retainedTarget = null;
   }
   async function browse() {
@@ -116,19 +120,20 @@
       if (!target || controller.signal.aborted || outputSpec.extension !== expectedSpec.extension) return;
       filename = normalizeExportFilename(target.name, expectedSpec.extension, expectedName);
       retainedTarget = compatibleRetainedTarget(target, filename, expectedSpec.extension);
-    } catch (error) {
-      if (!controller.signal.aborted && error?.name !== 'AbortError') {
-        notifyError(`Could not select location: ${error.message}`);
+    } catch (error: unknown) {
+      if (!controller.signal.aborted && (!(error instanceof Error) || error.name !== 'AbortError')) {
+        notifyError(`Could not select location: ${errorText(error)}`);
       }
     } finally {
       browsing = false;
       if (browseController === controller) browseController = null;
     }
   }
-  function onKey(event) {
+  function onKey(event: KeyboardEvent) {
     if (event.key !== 'Escape') return;
     // Let a dirty number field consume the first Escape to restore its committed value.
-    if (!busy && event.target.closest?.('.number-field[data-dirty="true"]')) return;
+    if (!busy && event.target instanceof Element &&
+      event.target.closest('.number-field[data-dirty="true"]')) return;
     event.preventDefault();
     event.stopImmediatePropagation();
     close();
@@ -202,21 +207,20 @@
         exportController = null;
         onClose();
       }
-    } catch (error) {
-      if (!controller.signal.aborted && error?.name !== 'AbortError') {
-        notifyError(`Could not save file: ${error.message}`);
+    } catch (error: unknown) {
+      if (!controller.signal.aborted && (!(error instanceof Error) || error.name !== 'AbortError')) {
+        notifyError(`Could not save file: ${errorText(error)}`);
       }
     } finally {
       busy = false;
       if (exportController === controller) exportController = null;
     }
   }
-  function backdropClick(event) { if (event.target === event.currentTarget) close(); }
 </script>
 
 <svelte:window onkeydowncapture={onKey} />
 
-<div class="modal-backdrop" onclick={backdropClick} role="presentation">
+<div class="modal-backdrop" role="presentation">
   <div class="modal-dialog export-dialog" role="dialog" aria-modal="true" aria-labelledby="export-title"
     tabindex="-1" use:popupFocus={{ initialFocus: '.seg button:not([disabled])' }}>
     <div class="modal-head">

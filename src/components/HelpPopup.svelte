@@ -1,15 +1,13 @@
-<script>
+<script lang="ts">
   import { popupFocus } from '../lib/popupFocus.js';
 
-  /**
-   * @typedef {Object} Props
-   * @property {string} [page]
-   * @property {() => void} [onClose]
-   */
+  interface Props {
+    page?: string;
+    onClose?: () => void;
+  }
 
-  /** @type {Props} */
-  let { page = 'animation-json', onClose = () => {} } = $props();
-  const shortcuts = [
+  let { page = 'animation-json', onClose = () => {} }: Props = $props();
+  const shortcuts: ReadonlyArray<readonly [string, string]> = [
     ['Ctrl/Cmd+N', 'New project'],
     ['Ctrl/Cmd+S', 'Save project'],
     ['Ctrl/Cmd+Shift+S', 'Save As'],
@@ -17,7 +15,8 @@
     ['Ctrl/Cmd+Y / Ctrl/Cmd+Shift+Z', 'Redo'],
     ['Ctrl/Cmd+C / Ctrl/Cmd+V', 'Copy / paste selected layer clips or Timeline clips'],
     ['Ctrl/Cmd+D', 'Deselect active context'],
-    ['Ctrl/Cmd+T', 'Transform selection / move layer'],
+    ['Ctrl/Cmd+T', 'Activate Move tool'],
+    ['I (hold)', 'Temporarily use the eyedropper while drawing'],
     ['K / Space (Timeline)', 'Play / stop'],
     ['Left / Right', 'Previous / next tick'],
     ['V / C / T', 'Timeline Select / Razor / Tag'],
@@ -35,7 +34,7 @@
     ['Escape', 'Close or cancel frontmost action'],
     ['Tab / Shift+Tab', 'Reserved / unsupported'],
   ];
-  const fields = [
+  const fields: ReadonlyArray<readonly [string, string, string]> = [
     ['format', 'string', '`paintty-animation`'],
     ['version', 'integer', '`1`'],
     ['canvas.columns, canvas.rows', 'positive integer', 'Terminal frame size'],
@@ -55,12 +54,12 @@
     ['cell.foreground, cell.background', 'string | null', 'Hex colors'],
     ['cell.width', '1 | 2', 'Terminal glyph width'],
   ];
-  const tags = [
+  const tags: ReadonlyArray<readonly [string, string, string]> = [
     ['loop-start', 'none', 'Inclusive start; without end, loops to sequence end'],
     ['loop-end', 'none', 'Inclusive loop end; at most one'],
     ['custom', 'non-empty string', 'Programmer event'],
   ];
-  const indexes = [
+  const indexes: ReadonlyArray<readonly [string, string]> = [
     ['layers[].id', 'Dense back-to-front index from 0'],
     ['frames[].layers[].layerId', 'Index into `layers`'],
   ];
@@ -86,8 +85,7 @@
   let title = $derived(shortcutsPage ? 'Keyboard Shortcuts' : 'Animation JSON Format');
 
   function close() { onClose(); }
-  function backdropClick(event) { if (event.target === event.currentTarget) close(); }
-  function onKey(event) {
+  function onKey(event: KeyboardEvent) {
     if (event.key !== 'Escape') return;
     event.preventDefault();
     event.stopImmediatePropagation();
@@ -97,8 +95,8 @@
 
 <svelte:window onkeydowncapture={onKey} />
 
-<div class="backdrop" role="presentation" onclick={backdropClick}>
-  <section class="dialog" role="dialog" aria-modal="true" aria-labelledby="help-popup-title"
+<div class="backdrop" role="presentation">
+  <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="help-popup-title"
     tabindex="-1" use:popupFocus={{ initialFocus: '.close' }}>
     <header>
       <h2 id="help-popup-title">{title}</h2>
@@ -151,7 +149,7 @@
         </section>
       {/if}
     </div>
-  </section>
+  </div>
 </div>
 
 <style>

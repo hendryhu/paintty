@@ -1,18 +1,24 @@
-  <script>
+  <script lang="ts">
   import Icon from './Icon.svelte';
   import { activeTool, altEyedrop, paintColor } from '../lib/stores.js';
   import { layers, activeLayerId, activeLayerPart } from '../lib/grid.js';
   import { isToolDisabledForLayer } from '../lib/toolAvailability.js';
+  import type { EditorTool } from '../lib/types/editor-domain.js';
 
-  /**
-   * @typedef {Object} Props
-   * @property {(detail: { x: number, y: number }) => void} [onColor]
-   */
+  interface Props {
+    onColor?: (detail: { x: number; y: number }) => void;
+  }
 
-  /** @type {Props} */
-  let { onColor = () => {} } = $props();
+  interface ToolDefinition {
+    id: EditorTool;
+    icon?: string;
+    glyph?: string;
+    title: string;
+  }
 
-  const tools = [
+  let { onColor = () => {} }: Props = $props();
+
+  const tools: Array<ToolDefinition | null> = [
     { id: 'brush',      icon: 'material-symbols:edit',              title: 'Brush' },
     { id: 'subcell',    glyph: '▚',                                 title: 'Special brush' },
     { id: 'eraser',     icon: 'material-symbols:ink-eraser',        title: 'Eraser' },
@@ -34,10 +40,12 @@
 
   let activeLayer = $derived($layers.find((layer) => layer.id === $activeLayerId));
 
-  function choose(t) { activeTool.set(t.id); }
-  function openColor(event) {
+  function choose(tool: ToolDefinition): void { activeTool.set(tool.id); }
+  function openColor(event: MouseEvent): void {
     event.stopPropagation();
-    const rect = event.currentTarget.getBoundingClientRect();
+    const target = event.currentTarget;
+    if (!(target instanceof HTMLButtonElement)) return;
+    const rect = target.getBoundingClientRect();
     const pickerWidth = 292;
     const pickerHeight = 340;
     let x = rect.right + 10;
@@ -47,7 +55,7 @@
   }
 </script>
 
-<div class="tools">
+<div class="tools scroll">
   {#each tools as t}
     {#if t === null}
       <div class="sep"></div>

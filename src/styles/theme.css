@@ -41,6 +41,7 @@
   --danger-bg:  #6a3030;
   --play:       #72c985;
   --stop:       var(--danger);
+  --snap-guide: #ff4fbf;
 
   --grid-line: rgba(255, 255, 255, 0.08);
   --selection-outline: rgba(224, 164, 88, 0.5);
@@ -101,6 +102,14 @@
   --tools-w:    42px;
   --right-w:    260px;
   --timeline-h: 34px;
+
+  --z-resize-handle: 68;
+  --z-menubar: 70;
+  --z-menu: 80;
+  --z-popover: 90;
+  --z-modal: 100;
+  --z-notification: 120;
+  --z-viewport-blocker: 1000;
 
   --cell-w: 18px;
   --cell-h: 36px;
